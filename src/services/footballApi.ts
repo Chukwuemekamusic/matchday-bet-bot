@@ -43,13 +43,23 @@ class FootballAPIService {
     const today = new Date().toISOString().split("T")[0];
 
     try {
-      const competitionIds = config.footballApi.supportedCompetitions.join(",");
-      const response = await this.request<FootballAPIResponse>(
-        `/matches?dateFrom=${today}&dateTo=${today}&competitions=${competitionIds}`
-      );
+      // Fetch matches from each competition separately
+      const allMatches: FootballAPIMatch[] = [];
 
-      console.log(`Fetched ${response.matches.length} matches for ${today}`);
-      return response.matches;
+      for (const competitionId of config.footballApi.supportedCompetitions) {
+        try {
+          const response = await this.request<FootballAPIResponse>(
+            `/competitions/${competitionId}/matches?dateFrom=${today}&dateTo=${today}`
+          );
+          allMatches.push(...response.matches);
+        } catch (error) {
+          // Log error for individual competition but continue with others
+          console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
+        }
+      }
+
+      console.log(`Fetched ${allMatches.length} matches for ${today}`);
+      return allMatches;
     } catch (error) {
       console.error("Failed to fetch today's matches", error);
       throw error;
@@ -61,12 +71,23 @@ class FootballAPIService {
    */
   async getMatchesByDate(date: string): Promise<FootballAPIMatch[]> {
     try {
-      const competitionIds = config.footballApi.supportedCompetitions.join(",");
-      const response = await this.request<FootballAPIResponse>(
-        `/matches?dateFrom=${date}&dateTo=${date}&competitions=${competitionIds}`
-      );
+      // Fetch matches from each competition separately
+      const allMatches: FootballAPIMatch[] = [];
 
-      return response.matches;
+      for (const competitionId of config.footballApi.supportedCompetitions) {
+        try {
+          const response = await this.request<FootballAPIResponse>(
+            `/competitions/${competitionId}/matches?dateFrom=${date}&dateTo=${date}`
+          );
+          allMatches.push(...response.matches);
+        } catch (error) {
+          // Log error for individual competition but continue with others
+          console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
+        }
+      }
+
+      console.log(`Fetched ${allMatches.length} matches for ${date}`);
+      return allMatches;
     } catch (error) {
       console.error(`Failed to fetch matches for ${date}`, error);
       throw error;
