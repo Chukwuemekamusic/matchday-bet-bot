@@ -96,25 +96,45 @@ class DatabaseService {
 
   /**
    * Upsert a match from the API
+   * Only accepts fields that are inserted/updated in the SQL
    */
-  upsertMatch(match: Omit<DBMatch, "id" | "created_at">): number {
+  upsertMatch(match: {
+    api_match_id: number;
+    home_team: string;
+    away_team: string;
+    competition: string;
+    competition_code: string;
+    kickoff_time: number;
+    status: string;
+    home_score: number | null;
+    away_score: number | null;
+  }): number {
     const stmt = this.db.prepare(`
       INSERT INTO matches (
         api_match_id, home_team, away_team, competition, competition_code,
         kickoff_time, status, home_score, away_score
       ) VALUES (
-        @api_match_id, @home_team, @away_team, @competition, @competition_code,
-        @kickoff_time, @status, @home_score, @away_score
+        ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(api_match_id) DO UPDATE SET
-        status = @status,
-        home_score = @home_score,
-        away_score = @away_score,
-        kickoff_time = @kickoff_time
+        status = excluded.status,
+        home_score = excluded.home_score,
+        away_score = excluded.away_score,
+        kickoff_time = excluded.kickoff_time
       RETURNING id
     `);
 
-    const result = stmt.get(match) as { id: number };
+    const result = stmt.get(
+      match.api_match_id,
+      match.home_team,
+      match.away_team,
+      match.competition,
+      match.competition_code,
+      match.kickoff_time,
+      match.status,
+      match.home_score,
+      match.away_score
+    ) as { id: number };
     return result.id;
   }
 

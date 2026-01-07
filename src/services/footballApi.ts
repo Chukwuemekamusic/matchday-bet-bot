@@ -51,7 +51,33 @@ class FootballAPIService {
           const response = await this.request<FootballAPIResponse>(
             `/competitions/${competitionId}/matches?dateFrom=${today}&dateTo=${today}`
           );
-          allMatches.push(...response.matches);
+
+          // Validate matches before adding them
+          const validMatches = response.matches.filter((match) => {
+            const isValid =
+              match &&
+              typeof match.id === "number" &&
+              match.id > 0 &&
+              match.homeTeam?.name &&
+              match.awayTeam?.name &&
+              match.competition?.name &&
+              match.competition?.code;
+            if (!isValid) {
+              console.warn(
+                `⚠️ Invalid match data from API:`,
+                JSON.stringify(match).slice(0, 200)
+              );
+            }
+            return isValid;
+          });
+
+          allMatches.push(...validMatches);
+
+          if (validMatches.length !== response.matches.length) {
+            console.warn(
+              `⚠️ Competition ${competitionId}: ${response.matches.length - validMatches.length} invalid matches filtered out`
+            );
+          }
         } catch (error) {
           // Log error for individual competition but continue with others
           console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
@@ -79,7 +105,33 @@ class FootballAPIService {
           const response = await this.request<FootballAPIResponse>(
             `/competitions/${competitionId}/matches?dateFrom=${date}&dateTo=${date}`
           );
-          allMatches.push(...response.matches);
+
+          // Validate matches before adding them
+          const validMatches = response.matches.filter((match) => {
+            const isValid =
+              match &&
+              typeof match.id === "number" &&
+              match.id > 0 &&
+              match.homeTeam?.name &&
+              match.awayTeam?.name &&
+              match.competition?.name &&
+              match.competition?.code;
+            if (!isValid) {
+              console.warn(
+                `⚠️ Invalid match data from API:`,
+                JSON.stringify(match).slice(0, 200)
+              );
+            }
+            return isValid;
+          });
+
+          allMatches.push(...validMatches);
+
+          if (validMatches.length !== response.matches.length) {
+            console.warn(
+              `⚠️ Competition ${competitionId}: ${response.matches.length - validMatches.length} invalid matches filtered out`
+            );
+          }
         } catch (error) {
           // Log error for individual competition but continue with others
           console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
@@ -185,6 +237,7 @@ class FootballAPIService {
 
   /**
    * Convert API match to DB format
+   * Returns null if match data is invalid
    */
   static toDBMatch(match: FootballAPIMatch): {
     api_match_id: number;
@@ -196,7 +249,31 @@ class FootballAPIService {
     status: string;
     home_score: number | null;
     away_score: number | null;
-  } {
+  } | null {
+    // Validate all required fields before mapping
+    if (
+      !match ||
+      typeof match.id !== "number" ||
+      match.id <= 0 ||
+      !match.homeTeam?.name ||
+      !match.awayTeam?.name ||
+      !match.competition?.name ||
+      !match.competition?.code ||
+      !match.utcDate ||
+      !match.status
+    ) {
+      console.error("❌ Invalid match data, missing required fields:", {
+        id: match?.id,
+        homeTeam: match?.homeTeam?.name,
+        awayTeam: match?.awayTeam?.name,
+        competition: match?.competition?.name,
+        competitionCode: match?.competition?.code,
+        utcDate: match?.utcDate,
+        status: match?.status,
+      });
+      return null;
+    }
+
     return {
       api_match_id: match.id,
       home_team: match.homeTeam.shortName || match.homeTeam.name,

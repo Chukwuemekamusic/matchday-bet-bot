@@ -115,7 +115,7 @@ bot.onSlashCommand("matches", async (handler, { channelId, args }) => {
 
   for (const [competition, compMatches] of grouped) {
     const emoji = getCompetitionEmoji(compMatches[0].competition_code);
-    message += `${emoji} **${competition}**\n`;
+    message += `${emoji} **${competition}**\n\n`;
 
     for (const match of compMatches) {
       const time = formatTime(match.kickoff_time);
@@ -123,11 +123,10 @@ bot.onSlashCommand("matches", async (handler, { channelId, args }) => {
       const pool = match.on_chain_match_id ? formatEth(match.total_pool) : "0";
       const status = isBettingOpen(match.kickoff_time) ? "🟢" : "🔴";
 
-      message += `${status} #${displayId} ${match.home_team} vs ${match.away_team}\n`;
-      message += `   ⏰ ${time} (${countdown}) | 💰 ${pool} ETH\n`;
+      message += `${status} **#${displayId}** ${match.home_team} vs ${match.away_team}\n`;
+      message += `   ⏰ ${time} (${countdown}) | 💰 ${pool} ETH\n\n`;
       displayId++;
     }
-    message += "\n";
   }
 
   message += "Use `/bet <#> <home|draw|away> <amount>` to place a bet!";
@@ -646,17 +645,36 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
     const matches = await footballApi.getTodaysMatches();
 
     let newCount = 0;
+    let skippedCount = 0;
+
     for (const match of matches) {
       const dbMatch = FootballAPIService.toDBMatch(match);
-      const existing = db.getMatchByApiId(match.id);
 
+      // Skip if toDBMatch returned null (invalid data)
+      if (!dbMatch) {
+        console.warn(`⚠️ Skipping match with invalid data in /fetch:`, {
+          id: match?.id,
+          homeTeam: match?.homeTeam?.name,
+          awayTeam: match?.awayTeam?.name,
+        });
+        skippedCount++;
+        continue;
+      }
+
+      // At this point, we know dbMatch is valid and has api_match_id
+      const existing = db.getMatchByApiId(dbMatch.api_match_id);
+
+      // Only pass fields that upsertMatch expects (matching SQL parameters)
       db.upsertMatch({
-        ...dbMatch,
-        on_chain_match_id: null,
-        result: null,
-        total_pool: "0",
-        resolved_at: null,
-        posted_to_towns: false,
+        api_match_id: dbMatch.api_match_id,
+        home_team: dbMatch.home_team,
+        away_team: dbMatch.away_team,
+        competition: dbMatch.competition,
+        competition_code: dbMatch.competition_code,
+        kickoff_time: dbMatch.kickoff_time,
+        status: dbMatch.status,
+        home_score: dbMatch.home_score,
+        away_score: dbMatch.away_score,
       });
 
       if (!existing) newCount++;
@@ -664,7 +682,7 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
 
     await handler.sendMessage(
       channelId,
-      `✅ Fetched ${matches.length} matches (${newCount} new)`
+      `✅ Fetched ${matches.length} matches (${newCount} new${skippedCount > 0 ? `, ${skippedCount} skipped` : ""})`
     );
   } catch (error) {
     await handler.sendMessage(

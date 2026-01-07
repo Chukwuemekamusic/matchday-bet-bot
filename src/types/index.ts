@@ -56,8 +56,9 @@ export interface UserStats {
 }
 
 // Football API types
+// Note: API may return null/undefined for some fields in edge cases
 export interface FootballAPIMatch {
-  id: number;
+  id: number | null;
   utcDate: string;
   status: string;
   homeTeam: {
@@ -65,18 +66,18 @@ export interface FootballAPIMatch {
     name: string;
     shortName: string;
     tla: string;
-  };
+  } | null;
   awayTeam: {
     id: number;
     name: string;
     shortName: string;
     tla: string;
-  };
+  } | null;
   competition: {
     id: number;
     name: string;
     code: string;
-  };
+  } | null;
   score: {
     fullTime: {
       home: number | null;

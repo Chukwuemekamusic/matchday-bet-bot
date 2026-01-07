@@ -96,19 +96,47 @@ async function fetchTodaysMatches(): Promise<void> {
 
     let newCount = 0;
     let updatedCount = 0;
+    let skippedCount = 0;
 
     for (const match of matches) {
       const dbMatch = FootballAPIService.toDBMatch(match);
-      const existing = db.getMatchByApiId(match.id);
 
-      db.upsertMatch({
-        ...dbMatch,
-        on_chain_match_id: null,
-        result: null,
-        total_pool: "0",
-        resolved_at: null,
-        posted_to_towns: false,
+      // Skip if toDBMatch returned null (invalid data)
+      if (!dbMatch) {
+        console.warn(`⚠️ Skipping match with invalid data:`, {
+          id: match?.id,
+          homeTeam: match?.homeTeam?.name,
+          awayTeam: match?.awayTeam?.name,
+        });
+        skippedCount++;
+        continue;
+      }
+
+      // At this point, we know dbMatch is valid and has api_match_id
+      const existing = db.getMatchByApiId(dbMatch.api_match_id);
+
+      // DEBUG: Log the exact data being passed
+      const matchData = {
+        api_match_id: dbMatch.api_match_id,
+        home_team: dbMatch.home_team,
+        away_team: dbMatch.away_team,
+        competition: dbMatch.competition,
+        competition_code: dbMatch.competition_code,
+        kickoff_time: dbMatch.kickoff_time,
+        status: dbMatch.status,
+        home_score: dbMatch.home_score,
+        away_score: dbMatch.away_score,
+      };
+
+      console.log("🔍 DEBUG - About to insert match:", JSON.stringify(matchData, null, 2));
+      console.log("🔍 DEBUG - Types:", {
+        api_match_id: typeof dbMatch.api_match_id,
+        home_team: typeof dbMatch.home_team,
+        away_team: typeof dbMatch.away_team,
       });
+
+      // Only pass fields that upsertMatch expects (matching SQL parameters)
+      db.upsertMatch(matchData);
 
       if (existing) {
         updatedCount++;
@@ -117,7 +145,11 @@ async function fetchTodaysMatches(): Promise<void> {
       }
     }
 
-    console.log(`✅ Matches fetched: ${newCount} new, ${updatedCount} updated`);
+    console.log(
+      `✅ Matches fetched: ${newCount} new, ${updatedCount} updated${
+        skippedCount > 0 ? `, ${skippedCount} skipped` : ""
+      }`
+    );
   } catch (error) {
     console.error("❌ Failed to fetch matches:", error);
   }
@@ -128,7 +160,10 @@ async function fetchTodaysMatches(): Promise<void> {
  */
 async function closeExpiredBetting(): Promise<void> {
   // Skip if contract not available
-  if (!contractServiceInstance || !contractServiceInstance.isContractAvailable()) {
+  if (
+    !contractServiceInstance ||
+    !contractServiceInstance.isContractAvailable()
+  ) {
     return;
   }
 
@@ -216,7 +251,11 @@ async function checkMatchResults(): Promise<void> {
       db.updateMatchResult(match.id, homeScore, awayScore, outcome);
 
       // Resolve on-chain if match was created AND contract is available
-      if (match.on_chain_match_id && contractServiceInstance && contractServiceInstance.isContractAvailable()) {
+      if (
+        match.on_chain_match_id &&
+        contractServiceInstance &&
+        contractServiceInstance.isContractAvailable()
+      ) {
         const result = await contractServiceInstance!.resolveMatch(
           match.on_chain_match_id,
           outcome
@@ -259,7 +298,11 @@ Winners can now claim using \`/claim\``
       } else {
         console.log(
           `ℹ️ Match ${match.home_team} vs ${match.away_team} finished ` +
-            `(${homeScore}-${awayScore})${!contractServiceInstance?.isContractAvailable() ? " (contract not deployed)" : " but was never bet on"}`
+            `(${homeScore}-${awayScore})${
+              !contractServiceInstance?.isContractAvailable()
+                ? " (contract not deployed)"
+                : " but was never bet on"
+            }`
         );
       }
     } catch (error) {
