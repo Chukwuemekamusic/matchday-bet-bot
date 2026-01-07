@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import config from "../config";
 import { DBMatch, PendingBet, UserStats, Outcome } from "../types";
 
@@ -6,6 +8,14 @@ class DatabaseService {
   private db: Database;
 
   constructor() {
+    // Ensure database directory exists
+    const dbDir = dirname(config.database.path);
+    try {
+      mkdirSync(dbDir, { recursive: true });
+    } catch (error) {
+      // Directory might already exist, ignore error
+    }
+
     this.db = new Database(config.database.path);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.init();
