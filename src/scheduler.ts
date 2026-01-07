@@ -127,6 +127,11 @@ async function fetchTodaysMatches(): Promise<void> {
  * Close betting for matches that have started
  */
 async function closeExpiredBetting(): Promise<void> {
+  // Skip if contract not available
+  if (!contractServiceInstance || !contractServiceInstance.isContractAvailable()) {
+    return;
+  }
+
   const matchesToClose = db.getMatchesToClose();
 
   if (matchesToClose.length === 0) {
@@ -210,8 +215,8 @@ async function checkMatchResults(): Promise<void> {
       // Update local database
       db.updateMatchResult(match.id, homeScore, awayScore, outcome);
 
-      // Resolve on-chain if match was created
-      if (match.on_chain_match_id) {
+      // Resolve on-chain if match was created AND contract is available
+      if (match.on_chain_match_id && contractServiceInstance && contractServiceInstance.isContractAvailable()) {
         const result = await contractServiceInstance!.resolveMatch(
           match.on_chain_match_id,
           outcome
@@ -254,7 +259,7 @@ Winners can now claim using \`/claim\``
       } else {
         console.log(
           `ℹ️ Match ${match.home_team} vs ${match.away_team} finished ` +
-            `(${homeScore}-${awayScore}) but was never bet on`
+            `(${homeScore}-${awayScore})${!contractServiceInstance?.isContractAvailable() ? " (contract not deployed)" : " but was never bet on"}`
         );
       }
     } catch (error) {

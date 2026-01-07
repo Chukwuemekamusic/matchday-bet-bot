@@ -87,6 +87,15 @@ class ContractService {
   }
 
   /**
+   * Check if a real contract is deployed and available
+   * Returns false if using placeholder address (pre-deployment)
+   */
+  isContractAvailable(): boolean {
+    const placeholderAddress = "0x0000000000000000000000000000000000000000";
+    return this.contractAddress.toLowerCase() !== placeholderAddress.toLowerCase();
+  }
+
+  /**
    * Get bot wallet address (gas wallet)
    */
   getBotAddress(): string {

@@ -165,19 +165,19 @@ bot.onSlashCommand("odds", async (handler, { channelId, args }) => {
 
   const match = matches[matchNum - 1];
 
-  // If match hasn't been created on-chain yet
-  if (!match.on_chain_match_id) {
-    await handler.sendMessage(
-      channelId,
-      `⚽ **${match.home_team} vs ${match.away_team}**
+  // If match hasn't been created on-chain yet OR contract not deployed
+  if (!match.on_chain_match_id || !contractService.isContractAvailable()) {
+    const message = `⚽ **${match.home_team} vs ${match.away_team}**
 ${match.competition}
 
 ⏰ Kickoff: ${formatTime(match.kickoff_time)}
 
-📊 No bets placed yet - be the first!
-
-Odds will update as bets come in.`
-    );
+${
+  contractService.isContractAvailable()
+    ? "📊 No bets placed yet - be the first!\n\nOdds will update as bets come in."
+    : "📊 Betting odds will be available once the smart contract is deployed!\n\nStay tuned for live betting action. ⚡"
+}`;
+    await handler.sendMessage(channelId, message);
     return;
   }
 
@@ -310,8 +310,8 @@ Example: \`/bet 1 home 0.01\``
     return;
   }
 
-  // Check if user already bet on this match (if on-chain)
-  if (match.on_chain_match_id) {
+  // Check if user already bet on this match (if on-chain and contract available)
+  if (match.on_chain_match_id && contractService.isContractAvailable()) {
     const hasBet = await contractService.hasUserBet(
       match.on_chain_match_id,
       userId
@@ -335,9 +335,9 @@ Example: \`/bet 1 home 0.01\``
       ? "Draw"
       : `${match.away_team} Win (Away)`;
 
-  // Calculate potential winnings if match is on-chain
+  // Calculate potential winnings if match is on-chain and contract available
   let potentialWinnings = "";
-  if (match.on_chain_match_id) {
+  if (match.on_chain_match_id && contractService.isContractAvailable()) {
     const potential = await contractService.calculatePotentialWinnings(
       match.on_chain_match_id,
       prediction,
@@ -391,6 +391,37 @@ bot.onSlashCommand("confirm", async (handler, { channelId, userId }) => {
       channelId,
       "❌ Betting is now closed for this match."
     );
+    return;
+  }
+
+  // Check if contract is available
+  if (!contractService.isContractAvailable()) {
+    // Clear pending bet
+    db.clearPendingBet(userId);
+
+    const predictionDisplay = formatOutcome(pending.prediction);
+
+    const message = `⏳ **Bet Pending Contract Deployment**
+
+**Match:** ${match.home_team} vs ${match.away_team}
+**Your Pick:** ${predictionDisplay}
+**Stake:** ${pending.amount} ETH
+
+The betting smart contract is not yet deployed to Base mainnet.
+
+🚀 **What's Next:**
+• Your bet selection has been noted
+• Once the contract is live, you'll be able to place bets
+• We'll announce when betting goes live!
+
+Stay tuned! In the meantime, you can:
+• Browse upcoming matches with \`/matches\`
+• Check your stats with \`/stats\`
+• View the leaderboard with \`/leaderboard\`
+
+_Thank you for your patience as we prepare for launch! ⚡_`;
+
+    await handler.sendMessage(channelId, message);
     return;
   }
 
@@ -458,6 +489,24 @@ bot.onSlashCommand("cancel", async (handler, { channelId, userId }) => {
 
 // /mybets - Show user's bets
 bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
+  // Check if contract is available
+  if (!contractService.isContractAvailable()) {
+    await handler.sendMessage(
+      channelId,
+      `📋 **My Bets**
+
+Your bet history will be available once the smart contract is deployed.
+
+In the meantime:
+• Use \`/matches\` to browse upcoming matches
+• Use \`/bet\` to practice the betting flow
+• Use \`/stats\` to track your activity
+
+Stay tuned for the contract launch! 🚀`
+    );
+    return;
+  }
+
   const matches = db.getTodaysMatches();
   const bets: { match: DBMatch; bet: any }[] = [];
 
