@@ -1,7 +1,7 @@
 import { makeTownsBot } from "@towns-protocol/bot";
 import commands from "./commands";
 import { db } from "./db";
-import { contractService } from "./services/contract";
+import { ContractService } from "./services/contract";
 import { footballApi, FootballAPIService } from "./services/footballApi";
 import {
   formatEth,
@@ -25,6 +25,9 @@ const bot = await makeTownsBot(
     commands,
   }
 );
+
+// Initialize contract service with bot instance
+const contractService = new ContractService(bot);
 
 // /help - Show available commands
 bot.onSlashCommand("help", async (handler, { channelId }) => {
@@ -676,7 +679,7 @@ app.get("/.well-known/agent-metadata.json", async (c) => {
 });
 
 // Start the scheduler for automated tasks
-startScheduler(bot);
+startScheduler(bot, contractService);
 
 console.log("🎯 MatchDay Bet Bot started!");
 console.log(`📝 Contract: ${config.contract.address}`);

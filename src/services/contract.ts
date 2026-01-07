@@ -1,15 +1,13 @@
 import {
   createPublicClient,
-  createWalletClient,
   http,
   parseAbiItem,
   encodeFunctionData,
   type PublicClient,
-  type WalletClient,
   type Address,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { execute } from "viem/experimental/erc7821";
+import { base } from "viem/chains";
 import config from "../config";
 import { Outcome, ContractMatch, ContractBet } from "../types";
 
@@ -68,49 +66,46 @@ const CONTRACT_ABI = [
 
 class ContractService {
   private publicClient: PublicClient;
-  private walletClient: WalletClient;
-  private account: ReturnType<typeof privateKeyToAccount>;
+  private bot: any; // Towns bot instance
   private contractAddress: Address;
 
-  constructor() {
-    // Create account from private key
-    this.account = privateKeyToAccount(
-      config.wallet.privateKey as `0x${string}`
-    );
+  constructor(bot: any) {
+    this.bot = bot;
 
     // Create public client for reading
     this.publicClient = createPublicClient({
-      chain: baseSepolia,
+      chain: base,
       transport: http(config.chain.rpcUrl),
     }) as PublicClient;
-
-    // Create wallet client for writing
-    this.walletClient = createWalletClient({
-      account: this.account,
-      chain: baseSepolia,
-      transport: http(config.chain.rpcUrl),
-    });
 
     this.contractAddress = config.contract.address as Address;
 
     console.log(`Contract service initialized`);
-    console.log(`Bot wallet address: ${this.account.address}`);
+    console.log(`Bot wallet address: ${this.bot.viem.account.address}`);
+    console.log(`Bot treasury address: ${this.bot.appAddress}`);
     console.log(`Contract address: ${config.contract.address}`);
   }
 
   /**
-   * Get bot wallet address
+   * Get bot wallet address (gas wallet)
    */
   getBotAddress(): string {
-    return this.account.address;
+    return this.bot.viem.account.address;
   }
 
   /**
-   * Get bot wallet balance
+   * Get bot treasury address (SimpleAccount)
+   */
+  getBotTreasuryAddress(): string {
+    return this.bot.appAddress;
+  }
+
+  /**
+   * Get bot treasury balance
    */
   async getBotBalance(): Promise<bigint> {
     return await this.publicClient.getBalance({
-      address: this.account.address,
+      address: this.bot.appAddress,
     });
   }
 
@@ -282,13 +277,18 @@ class ContractService {
     try {
       console.log(`Creating match: ${homeTeam} vs ${awayTeam}`);
 
-      const hash = await this.walletClient.writeContract({
-        address: this.contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: "createMatch",
-        args: [homeTeam, awayTeam, competition, BigInt(kickoffTime)],
-        chain: baseSepolia,
-        account: this.account,
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "createMatch",
+            args: [homeTeam, awayTeam, competition, BigInt(kickoffTime)],
+          },
+        ],
       });
 
       console.log(`Match creation tx sent: ${hash}`);
@@ -341,14 +341,19 @@ class ContractService {
         `Placing bet: match ${matchId}, prediction ${prediction}, amount ${amount}`
       );
 
-      const hash = await this.walletClient.writeContract({
-        address: this.contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: "placeBet",
-        args: [BigInt(matchId), prediction],
-        value: amount,
-        chain: baseSepolia,
-        account: this.account,
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "placeBet",
+            args: [BigInt(matchId), prediction],
+            value: amount,
+          },
+        ],
       });
 
       console.log(`Bet placement tx sent: ${hash}`);
@@ -368,13 +373,18 @@ class ContractService {
     try {
       console.log(`Closing betting for match ${matchId}`);
 
-      const hash = await this.walletClient.writeContract({
-        address: this.contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: "closeBetting",
-        args: [BigInt(matchId)],
-        chain: baseSepolia,
-        account: this.account,
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "closeBetting",
+            args: [BigInt(matchId)],
+          },
+        ],
       });
 
       console.log(`Close betting tx sent: ${hash}`);
@@ -397,13 +407,18 @@ class ContractService {
     try {
       console.log(`Resolving match ${matchId} with result ${result}`);
 
-      const hash = await this.walletClient.writeContract({
-        address: this.contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: "resolveMatch",
-        args: [BigInt(matchId), result],
-        chain: baseSepolia,
-        account: this.account,
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "resolveMatch",
+            args: [BigInt(matchId), result],
+          },
+        ],
       });
 
       console.log(`Resolve match tx sent: ${hash}`);
@@ -426,13 +441,18 @@ class ContractService {
     try {
       console.log(`Cancelling match ${matchId}: ${reason}`);
 
-      const hash = await this.walletClient.writeContract({
-        address: this.contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: "cancelMatch",
-        args: [BigInt(matchId), reason],
-        chain: baseSepolia,
-        account: this.account,
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "cancelMatch",
+            args: [BigInt(matchId), reason],
+          },
+        ],
       });
 
       console.log(`Cancel match tx sent: ${hash}`);
@@ -488,6 +508,6 @@ class ContractService {
   }
 }
 
-// Export singleton instance
-export const contractService = new ContractService();
-export default contractService;
+// Export class - will be instantiated with bot instance in index.ts
+export { ContractService };
+export default ContractService;

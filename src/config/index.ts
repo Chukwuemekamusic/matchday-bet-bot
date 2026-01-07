@@ -24,12 +24,7 @@ export const config = {
 
   // Base Chain RPC
   chain: {
-    rpcUrl: optionalEnv("BASE_RPC_URL", "https://sepolia.base.org"),
-  },
-
-  // Bot Wallet (for contract interactions - creating/resolving matches)
-  wallet: {
-    privateKey: requireEnv("BOT_WALLET_PRIVATE_KEY"),
+    rpcUrl: optionalEnv("BASE_RPC_URL", "https://mainnet.base.org"),
   },
 
   // Football API
@@ -58,6 +53,9 @@ export const config = {
     maxStake: optionalEnv("MAX_STAKE", "0.1"),
     pendingBetTimeout: 5 * 60 * 1000, // 5 minutes in ms
   },
+
+  // Optional channel for announcements
+  // defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
 };
 
 export default config;

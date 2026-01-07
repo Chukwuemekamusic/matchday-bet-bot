@@ -7,7 +7,7 @@
 
 import { db } from "./db";
 import { footballApi, FootballAPIService } from "./services/footballApi";
-import { contractService } from "./services/contract";
+import type { ContractService } from "./services/contract";
 import { Outcome } from "./types";
 import { formatEth } from "./utils/format";
 
@@ -16,14 +16,20 @@ const intervals: NodeJS.Timeout[] = [];
 
 // Store bot reference for posting messages
 let botInstance: any = null;
+let contractServiceInstance: ContractService | null = null;
 let defaultChannelId: string | null = null;
 
 /**
  * Start all scheduled tasks
  * @param bot - The Towns bot instance for posting messages
+ * @param contractService - The contract service instance
  */
-export function startScheduler(bot: any): void {
+export function startScheduler(
+  bot: any,
+  contractService: ContractService
+): void {
   botInstance = bot;
+  contractServiceInstance = contractService;
   defaultChannelId = process.env.DEFAULT_CHANNEL_ID || null;
 
   console.log("📅 Starting scheduler...");
@@ -135,7 +141,7 @@ async function closeExpiredBetting(): Promise<void> {
     }
 
     try {
-      const result = await contractService.closeBetting(
+      const result = await contractServiceInstance!.closeBetting(
         match.on_chain_match_id
       );
 
@@ -206,14 +212,16 @@ async function checkMatchResults(): Promise<void> {
 
       // Resolve on-chain if match was created
       if (match.on_chain_match_id) {
-        const result = await contractService.resolveMatch(
+        const result = await contractServiceInstance!.resolveMatch(
           match.on_chain_match_id,
           outcome
         );
 
         if (result) {
           // Get pool info for logging
-          const pools = await contractService.getPools(match.on_chain_match_id);
+          const pools = await contractServiceInstance!.getPools(
+            match.on_chain_match_id
+          );
           const totalPool = pools ? formatEth(pools.total) : "?";
 
           console.log(
