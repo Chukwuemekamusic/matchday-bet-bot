@@ -1,7 +1,6 @@
 import {
   createPublicClient,
   http,
-  parseAbiItem,
   encodeFunctionData,
   type PublicClient,
   type Address,
@@ -11,57 +10,246 @@ import { base } from "viem/chains";
 import config from "../config";
 import { Outcome, ContractMatch, ContractBet } from "../types";
 
-// Contract ABI (using viem's parseAbiItem format)
+// Contract ABI (JSON format for complex types)
 const CONTRACT_ABI = [
-  // Read functions
-  parseAbiItem(
-    "function getMatch(uint256 matchId) view returns (tuple(uint256 matchId, uint256 kickoffTime, uint256 totalPool, uint256 homePool, uint256 drawPool, uint256 awayPool, uint256 homeBetCount, uint256 drawBetCount, uint256 awayBetCount, uint256 platformFeeAmount, uint8 result, uint8 status, string homeTeam, string awayTeam, string competition))"
-  ),
-  parseAbiItem(
-    "function getOdds(uint256 matchId) view returns (uint256 homeOdds, uint256 drawOdds, uint256 awayOdds)"
-  ),
-  parseAbiItem(
-    "function getPools(uint256 matchId) view returns (uint256 total, uint256 home, uint256 draw, uint256 away)"
-  ),
-  parseAbiItem(
-    "function getUserBet(uint256 matchId, address user) view returns (tuple(address bettor, uint256 amount, uint8 prediction, bool claimed))"
-  ),
-  parseAbiItem(
-    "function hasUserBet(uint256 matchId, address user) view returns (bool)"
-  ),
-  parseAbiItem(
-    "function calculatePotentialWinnings(uint256 matchId, uint8 outcome, uint256 amount) view returns (uint256)"
-  ),
-  parseAbiItem("function nextMatchId() view returns (uint256)"),
-  parseAbiItem("function minStake() view returns (uint256)"),
-  parseAbiItem("function maxStake() view returns (uint256)"),
+  // Read functions with struct returns
+  {
+    type: "function",
+    name: "getMatch",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "kickoffTime", type: "uint256" },
+          { name: "totalPool", type: "uint256" },
+          { name: "homePool", type: "uint256" },
+          { name: "drawPool", type: "uint256" },
+          { name: "awayPool", type: "uint256" },
+          { name: "homeBetCount", type: "uint256" },
+          { name: "drawBetCount", type: "uint256" },
+          { name: "awayBetCount", type: "uint256" },
+          { name: "platformFeeAmount", type: "uint256" },
+          { name: "result", type: "uint8" },
+          { name: "status", type: "uint8" },
+          { name: "homeTeam", type: "string" },
+          { name: "awayTeam", type: "string" },
+          { name: "competition", type: "string" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "getUserBet",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "bettor", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "prediction", type: "uint8" },
+          { name: "claimed", type: "bool" },
+        ],
+      },
+    ],
+  },
+  // Read functions with multiple returns
+  {
+    type: "function",
+    name: "getOdds",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      { name: "homeOdds", type: "uint256" },
+      { name: "drawOdds", type: "uint256" },
+      { name: "awayOdds", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "getPools",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      { name: "total", type: "uint256" },
+      { name: "home", type: "uint256" },
+      { name: "draw", type: "uint256" },
+      { name: "away", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "hasUserBet",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "calculatePotentialWinnings",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "outcome", type: "uint8" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "nextMatchId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "minStake",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxStake",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 
   // Write functions
-  parseAbiItem(
-    "function createMatch(string homeTeam, string awayTeam, string competition, uint256 kickoffTime) returns (uint256)"
-  ),
-  parseAbiItem("function placeBet(uint256 matchId, uint8 prediction) payable"),
-  parseAbiItem("function closeBetting(uint256 matchId)"),
-  parseAbiItem("function resolveMatch(uint256 matchId, uint8 result)"),
-  parseAbiItem("function cancelMatch(uint256 matchId, string reason)"),
-  parseAbiItem("function claimWinnings(uint256 matchId)"),
-  parseAbiItem("function claimRefund(uint256 matchId)"),
+  {
+    type: "function",
+    name: "createMatch",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "homeTeam", type: "string" },
+      { name: "awayTeam", type: "string" },
+      { name: "competition", type: "string" },
+      { name: "kickoffTime", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "placeBet",
+    stateMutability: "payable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "prediction", type: "uint8" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "closeBetting",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "resolveMatch",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "result", type: "uint8" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "cancelMatch",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "reason", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "claimWinnings",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "claimRefund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
 
   // Events
-  parseAbiItem(
-    "event MatchCreated(uint256 indexed matchId, string homeTeam, string awayTeam, string competition, uint256 kickoffTime)"
-  ),
-  parseAbiItem(
-    "event BetPlaced(uint256 indexed matchId, address indexed bettor, uint8 prediction, uint256 amount, uint256 newPoolTotal)"
-  ),
-  parseAbiItem("event BettingClosed(uint256 indexed matchId)"),
-  parseAbiItem(
-    "event MatchResolved(uint256 indexed matchId, uint8 result, uint256 totalPool, uint256 winnerPool, uint256 platformFee)"
-  ),
-  parseAbiItem("event MatchCancelled(uint256 indexed matchId, string reason)"),
-  parseAbiItem(
-    "event WinningsClaimed(uint256 indexed matchId, address indexed bettor, uint256 amount, uint256 profit)"
-  ),
+  {
+    type: "event",
+    name: "MatchCreated",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "homeTeam", type: "string", indexed: false },
+      { name: "awayTeam", type: "string", indexed: false },
+      { name: "competition", type: "string", indexed: false },
+      { name: "kickoffTime", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "BetPlaced",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "bettor", type: "address", indexed: true },
+      { name: "prediction", type: "uint8", indexed: false },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "newPoolTotal", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "BettingClosed",
+    inputs: [{ name: "matchId", type: "uint256", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "MatchResolved",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "result", type: "uint8", indexed: false },
+      { name: "totalPool", type: "uint256", indexed: false },
+      { name: "winnerPool", type: "uint256", indexed: false },
+      { name: "platformFee", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "MatchCancelled",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "reason", type: "string", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "WinningsClaimed",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "bettor", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+      { name: "profit", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
 
 class ContractService {
@@ -92,7 +280,9 @@ class ContractService {
    */
   isContractAvailable(): boolean {
     const placeholderAddress = "0x0000000000000000000000000000000000000000";
-    return this.contractAddress.toLowerCase() !== placeholderAddress.toLowerCase();
+    return (
+      this.contractAddress.toLowerCase() !== placeholderAddress.toLowerCase()
+    );
   }
 
   /**
