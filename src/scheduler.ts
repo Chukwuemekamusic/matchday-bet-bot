@@ -344,7 +344,9 @@ async function pollMatchResults(): Promise<void> {
   // Fetch all today's matches in one API call (more efficient)
   try {
     const apiMatches = await footballApi.getTodaysMatches();
+    const matchesToResolve: Array<{ dbMatch: any; apiMatch: any; outcome: number }> = [];
 
+    // First pass: collect all finished matches
     for (const apiMatch of apiMatches) {
       // Only process finished matches
       if (!FootballAPIService.isFinished(apiMatch.status)) {
@@ -366,11 +368,136 @@ async function pollMatchResults(): Promise<void> {
         continue;
       }
 
-      await resolveMatchFromAPI(dbMatch, apiMatch);
+      // Validate scores and outcome
+      const homeScore = apiMatch.score.fullTime.home;
+      const awayScore = apiMatch.score.fullTime.away;
+
+      if (homeScore === null || awayScore === null) {
+        console.warn(`⚠️ Match ${dbMatch.id} finished but no score available`);
+        continue;
+      }
+
+      const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+
+      if (outcome === null) {
+        console.error(`❌ Could not determine outcome for match ${dbMatch.id}`);
+        continue;
+      }
+
+      // Add to batch resolution list
+      matchesToResolve.push({ dbMatch, apiMatch, outcome });
+    }
+
+    // Update all local databases first
+    for (const { dbMatch, apiMatch, outcome } of matchesToResolve) {
+      const homeScore = apiMatch.score.fullTime.home;
+      const awayScore = apiMatch.score.fullTime.away;
+      db.updateMatchResult(dbMatch.id, homeScore, awayScore, outcome);
+    }
+
+    // Batch resolve on-chain if contract available
+    if (matchesToResolve.length > 0 && contractServiceInstance?.isContractAvailable()) {
+      const onChainMatches = matchesToResolve.filter(m => m.dbMatch.on_chain_match_id);
+
+      if (onChainMatches.length > 0) {
+        console.log(`📦 Batch resolving ${onChainMatches.length} matches on-chain...`);
+
+        const batchData = onChainMatches.map(({ dbMatch, outcome }) => ({
+          matchId: dbMatch.on_chain_match_id,
+          result: outcome,
+        }));
+
+        const result = await contractServiceInstance.batchResolveMatches(batchData);
+
+        if (result) {
+          console.log(`✅ Successfully batch resolved ${onChainMatches.length} matches (tx: ${result.txHash})`);
+
+          // Log each resolved match and post results
+          for (const { dbMatch, apiMatch } of onChainMatches) {
+            const homeScore = apiMatch.score.fullTime.home;
+            const awayScore = apiMatch.score.fullTime.away;
+            const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+
+            // Get pool info for logging
+            const pools = await contractServiceInstance!.getPools(dbMatch.on_chain_match_id);
+            const totalPool = pools ? formatEth(pools.total) : "?";
+
+            console.log(
+              `  ✓ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} ` +
+                `(${Outcome[outcome!]}, Pool: ${totalPool} ETH)`
+            );
+
+            // Post result to channel if configured
+            await postMatchResult(dbMatch, homeScore, awayScore);
+          }
+        } else {
+          console.error(`❌ Batch resolution failed. Falling back to individual resolution.`);
+          // Fallback to individual resolution
+          for (const { dbMatch, apiMatch, outcome } of onChainMatches) {
+            await resolveMatchFromAPI(dbMatch, apiMatch);
+          }
+        }
+      }
+
+      // Handle matches without on-chain IDs (just post results)
+      const offChainMatches = matchesToResolve.filter(m => !m.dbMatch.on_chain_match_id);
+      for (const { dbMatch, apiMatch } of offChainMatches) {
+        const homeScore = apiMatch.score.fullTime.home;
+        const awayScore = apiMatch.score.fullTime.away;
+        console.log(`✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} (no on-chain bets)`);
+        await postMatchResult(dbMatch, homeScore, awayScore);
+      }
+    } else if (matchesToResolve.length > 0) {
+      // No contract, just post results
+      for (const { dbMatch, apiMatch } of matchesToResolve) {
+        const homeScore = apiMatch.score.fullTime.home;
+        const awayScore = apiMatch.score.fullTime.away;
+        console.log(`✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team}`);
+        await postMatchResult(dbMatch, homeScore, awayScore);
+      }
     }
   } catch (error) {
     console.error("❌ Failed to poll match results:", error);
   }
+}
+
+/**
+ * Post match result to channel (if configured)
+ */
+async function postMatchResult(
+  dbMatch: any,
+  homeScore: number,
+  awayScore: number
+): Promise<void> {
+  if (!botInstance || !defaultChannelId) {
+    return;
+  }
+
+  const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+  if (outcome === null) return;
+
+  const winner =
+    outcome === Outcome.HOME
+      ? dbMatch.home_team
+      : outcome === Outcome.AWAY
+      ? dbMatch.away_team
+      : "Draw";
+
+  let poolInfo = "";
+  if (dbMatch.on_chain_match_id && contractServiceInstance?.isContractAvailable()) {
+    const pools = await contractServiceInstance.getPools(dbMatch.on_chain_match_id);
+    const totalPool = pools ? formatEth(pools.total) : "?";
+    poolInfo = `\n💰 Total Pool: ${totalPool} ETH\n\nWinners can now claim using \`/claim\``;
+  }
+
+  await botInstance.sendMessage(
+    defaultChannelId,
+    `🏁 **Match Result**
+
+**${dbMatch.home_team} ${homeScore} - ${awayScore} ${dbMatch.away_team}**
+
+✅ Result: ${winner}${outcome !== Outcome.DRAW ? " wins!" : ""}${poolInfo}`
+  );
 }
 
 /**
@@ -422,26 +549,7 @@ async function resolveMatchFromAPI(
       );
 
       // Post result to channel if configured
-      if (botInstance && defaultChannelId) {
-        const winner =
-          outcome === Outcome.HOME
-            ? dbMatch.home_team
-            : outcome === Outcome.AWAY
-            ? dbMatch.away_team
-            : "Draw";
-
-        await botInstance.sendMessage(
-          defaultChannelId,
-          `🏁 **Match Result**
-
-**${dbMatch.home_team} ${homeScore} - ${awayScore} ${dbMatch.away_team}**
-
-✅ Result: ${winner}${outcome !== Outcome.DRAW ? " wins!" : ""}
-💰 Total Pool: ${totalPool} ETH
-
-Winners can now claim using \`/claim\``
-        );
-      }
+      await postMatchResult(dbMatch, homeScore, awayScore);
     }
   } else {
     console.log(

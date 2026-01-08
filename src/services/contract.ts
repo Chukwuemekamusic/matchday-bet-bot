@@ -170,6 +170,16 @@ const CONTRACT_ABI = [
   },
   {
     type: "function",
+    name: "batchResolveMatches",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchIds", type: "uint256[]" },
+      { name: "results", type: "uint8[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "cancelMatch",
     stateMutability: "nonpayable",
     inputs: [
@@ -626,6 +636,55 @@ class ContractService {
       return { txHash: hash };
     } catch (error) {
       console.error(`Failed to resolve match ${matchId}`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Resolve multiple matches in a single transaction (batch operation)
+   * Gas-efficient for resolving multiple matches at once
+   */
+  async batchResolveMatches(
+    matches: Array<{ matchId: number; result: Outcome }>
+  ): Promise<{ txHash: string } | null> {
+    try {
+      if (matches.length === 0) {
+        console.log("No matches to resolve");
+        return null;
+      }
+
+      const matchIds = matches.map((m) => BigInt(m.matchId));
+      const results = matches.map((m) => m.result);
+
+      console.log(
+        `Batch resolving ${matches.length} matches:`,
+        matches.map((m) => `${m.matchId}=${m.result}`).join(", ")
+      );
+
+      const hash = await execute(this.bot.viem, {
+        address: this.bot.appAddress,
+        account: this.bot.viem.account,
+        chain: base,
+        calls: [
+          {
+            to: this.contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: "batchResolveMatches",
+            args: [matchIds, results],
+          },
+        ],
+      });
+
+      console.log(`Batch resolve tx sent: ${hash}`);
+      await this.publicClient.waitForTransactionReceipt({ hash });
+
+      console.log(`Successfully resolved ${matches.length} matches in batch`);
+      return { txHash: hash };
+    } catch (error) {
+      console.error(
+        `Failed to batch resolve ${matches.length} matches`,
+        error
+      );
       return null;
     }
   }
