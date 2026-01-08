@@ -112,15 +112,13 @@ bot.onSlashCommand("matches", async (handler, { channelId, args }) => {
   }
 
   let message = "⚽ **Today's Matches**\n\n";
-  let displayId = 1;
 
   for (const [competition, compMatches] of grouped) {
     const emoji = getCompetitionEmoji(compMatches[0].competition_code);
     message += `${emoji} **${competition}**\n\n`;
 
     for (const match of compMatches) {
-      message += formatMatchDisplay(match, displayId);
-      displayId++;
+      message += formatMatchDisplay(match);
     }
   }
 
@@ -148,16 +146,14 @@ bot.onSlashCommand("odds", async (handler, { channelId, args }) => {
     return;
   }
 
-  const matches = db.getTodaysMatches();
-  if (matchNum > matches.length) {
+  const match = db.getMatchByDailyId(matchNum);
+  if (!match) {
     await handler.sendMessage(
       channelId,
-      `❌ Match #${matchNum} not found. Use \`/matches\` to see available matches.`
+      `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
     );
     return;
   }
-
-  const match = matches[matchNum - 1];
 
   // If match hasn't been created on-chain yet OR contract not deployed
   if (!match.on_chain_match_id || !contractService.isContractAvailable()) {
@@ -242,17 +238,15 @@ Example: \`/bet 1 home 0.01\``
     return;
   }
 
-  // Get match
-  const matches = db.getTodaysMatches();
-  if (matchNum > matches.length) {
+  // Get match by daily ID
+  const match = db.getMatchByDailyId(matchNum);
+  if (!match) {
     await handler.sendMessage(
       channelId,
-      `❌ Match #${matchNum} not found. Use \`/matches\` to see available matches.`
+      `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
     );
     return;
   }
-
-  const match = matches[matchNum - 1];
 
   // Check if betting is still open
   if (!isBettingOpen(match.kickoff_time)) {

@@ -186,6 +186,10 @@ async function morningFetch(): Promise<void> {
       }`
     );
 
+    // Assign stable daily IDs based on kickoff order
+    db.assignDailyIds();
+    console.log(`🔢 Assigned daily IDs to ${matches.length} matches`);
+
     // Update scheduler state and setup intelligent polling
     schedulerState.todaysMatches = matches.length;
 

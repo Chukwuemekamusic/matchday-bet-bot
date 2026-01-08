@@ -19,6 +19,7 @@ export interface DBMatch {
   id: number;
   api_match_id: number;
   on_chain_match_id: number | null;
+  daily_id: number | null;
   home_team: string;
   away_team: string;
   competition: string;

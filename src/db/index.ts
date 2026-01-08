@@ -28,6 +28,7 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         api_match_id INTEGER UNIQUE NOT NULL,
         on_chain_match_id INTEGER,
+        daily_id INTEGER,
         home_team TEXT NOT NULL,
         away_team TEXT NOT NULL,
         competition TEXT NOT NULL,
@@ -42,10 +43,11 @@ class DatabaseService {
         resolved_at INTEGER,
         posted_to_towns INTEGER DEFAULT 0
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_matches_kickoff ON matches(kickoff_time);
       CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
       CREATE INDEX IF NOT EXISTS idx_matches_api_id ON matches(api_match_id);
+      CREATE INDEX IF NOT EXISTS idx_matches_daily_id ON matches(daily_id);
     `);
 
     // Create pending bets table (for confirmation flow)
@@ -88,6 +90,15 @@ class DatabaseService {
         UNIQUE(match_date, competition_code)
       );
     `);
+
+    // Migrate existing databases: Add daily_id column if it doesn't exist
+    try {
+      this.db.exec(`ALTER TABLE matches ADD COLUMN daily_id INTEGER`);
+      console.log("✅ Migration: Added daily_id column to matches table");
+    } catch (error) {
+      // Column already exists (fresh database or already migrated)
+      // This is expected and safe to ignore
+    }
 
     console.log("Database initialized successfully");
   }
@@ -164,6 +175,51 @@ class DatabaseService {
       "SELECT * FROM matches WHERE on_chain_match_id = ?"
     );
     return stmt.get(onChainId) as DBMatch | undefined;
+  }
+
+  /**
+   * Get match by daily ID for today
+   */
+  getMatchByDailyId(dailyId: number): DBMatch | undefined {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE daily_id = ?
+        AND kickoff_time >= ?
+        AND kickoff_time < ?
+    `);
+
+    return stmt.get(
+      dailyId,
+      Math.floor(today.getTime() / 1000),
+      Math.floor(tomorrow.getTime() / 1000)
+    ) as DBMatch | undefined;
+  }
+
+  /**
+   * Assign daily IDs to all today's matches based on kickoff order
+   */
+  assignDailyIds(): void {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+    // Get all today's matches ordered by kickoff time
+    const matches = this.getTodaysMatches();
+
+    // Assign sequential daily IDs
+    const updateStmt = this.db.prepare(`
+      UPDATE matches SET daily_id = ? WHERE id = ?
+    `);
+
+    for (let i = 0; i < matches.length; i++) {
+      updateStmt.run(i + 1, matches[i].id);
+    }
   }
 
   /**
