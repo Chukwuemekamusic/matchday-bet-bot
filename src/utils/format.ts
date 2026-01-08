@@ -170,3 +170,42 @@ export function isBettingOpen(kickoffTime: number): boolean {
   const now = Math.floor(Date.now() / 1000);
   return now < kickoffTime;
 }
+
+/**
+ * Format match display based on status (for /matches command)
+ */
+export function formatMatchDisplay(match: DBMatch, displayId: number): string {
+  const { status, home_score, away_score, home_team, away_team, kickoff_time, total_pool, result } = match;
+  const pool = match.on_chain_match_id ? formatEth(total_pool) : "0";
+
+  // FINISHED - Show final score and result
+  if (status === "FINISHED") {
+    let resultText = "";
+    if (result === Outcome.HOME) {
+      resultText = ` | Winner: ${home_team} ✅`;
+    } else if (result === Outcome.AWAY) {
+      resultText = ` | Winner: ${away_team} ✅`;
+    } else if (result === Outcome.DRAW) {
+      resultText = " | Draw ✅";
+    }
+
+    return `🏁 **#${displayId}** ${home_team} ${home_score ?? 0}-${away_score ?? 0} ${away_team}\n   FT${resultText} | Pool: ${pool} ETH\n\n`;
+  }
+
+  // IN_PLAY, PAUSED, HALFTIME - Show live score
+  if (["IN_PLAY", "PAUSED", "HALFTIME"].includes(status)) {
+    const statusEmoji = status === "HALFTIME" ? "⏸️" : "⚽";
+    const statusText = status === "HALFTIME" ? "HT" : "LIVE";
+    return `🔴 **#${displayId}** ${home_team} vs ${away_team}\n   ${statusEmoji} ${statusText} | ${home_score ?? 0}-${away_score ?? 0} | Pool: ${pool} ETH\n\n`;
+  }
+
+  // POSTPONED or CANCELLED
+  if (["POSTPONED", "CANCELLED", "SUSPENDED"].includes(status)) {
+    return `⚠️ **#${displayId}** ${home_team} vs ${away_team}\n   ${status} | Pool: ${pool} ETH\n\n`;
+  }
+
+  // SCHEDULED or TIMED - Show countdown
+  const countdown = timeUntilKickoff(kickoff_time);
+  const statusIcon = isBettingOpen(kickoff_time) ? "🟢" : "🔴";
+  return `${statusIcon} **#${displayId}** ${home_team} vs ${away_team}\n   ⏰ ${formatTime(kickoff_time)} (${countdown}) | 💰 ${pool} ETH\n\n`;
+}

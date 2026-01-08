@@ -19,6 +19,23 @@ let botInstance: any = null;
 let contractServiceInstance: ContractService | null = null;
 let defaultChannelId: string | null = null;
 
+// Scheduler state for intelligent polling
+interface SchedulerState {
+  todaysMatches: number; // Count of today's matches
+  firstKickoff: number | null; // Unix timestamp
+  lastKickoff: number | null; // Unix timestamp
+  resultsPollingActive: boolean;
+  resultsPollingInterval: NodeJS.Timeout | null;
+}
+
+const schedulerState: SchedulerState = {
+  todaysMatches: 0,
+  firstKickoff: null,
+  lastKickoff: null,
+  resultsPollingActive: false,
+  resultsPollingInterval: null,
+};
+
 /**
  * Start all scheduled tasks
  * @param bot - The Towns bot instance for posting messages
@@ -34,25 +51,35 @@ export function startScheduler(
 
   console.log("📅 Starting scheduler...");
 
-  // Fetch matches every 6 hours
-  intervals.push(
-    setInterval(() => {
-      fetchTodaysMatches();
-    }, 6 * 60 * 60 * 1000) // 6 hours
-  );
+  // Morning fetch at 06:00 UTC daily
+  // Calculate ms until next 06:00 UTC
+  const now = new Date();
+  const next6AM = new Date();
+  next6AM.setUTCHours(6, 0, 0, 0);
+  if (now.getUTCHours() >= 6) {
+    // If past 6 AM today, schedule for tomorrow
+    next6AM.setUTCDate(next6AM.getUTCDate() + 1);
+  }
+  const msUntil6AM = next6AM.getTime() - now.getTime();
+
+  console.log(`⏰ Next morning fetch: ${next6AM.toISOString()}`);
+
+  // Schedule daily morning fetch
+  setTimeout(() => {
+    morningFetch();
+    // Repeat daily
+    intervals.push(
+      setInterval(() => {
+        morningFetch();
+      }, 24 * 60 * 60 * 1000) // 24 hours
+    );
+  }, msUntil6AM);
 
   // Check for matches to close every minute
   intervals.push(
     setInterval(() => {
       closeExpiredBetting();
     }, 60 * 1000) // 1 minute
-  );
-
-  // Check for match results every 15 minutes
-  intervals.push(
-    setInterval(() => {
-      checkMatchResults();
-    }, 15 * 60 * 1000) // 15 minutes
   );
 
   // Cleanup expired pending bets every 5 minutes
@@ -62,8 +89,8 @@ export function startScheduler(
     }, 5 * 60 * 1000) // 5 minutes
   );
 
-  // Initial fetch on startup
-  fetchTodaysMatches();
+  // Initial fetch on startup (morning fetch logic)
+  morningFetch();
 
   console.log("✅ Scheduler started");
 }
@@ -77,14 +104,22 @@ export function stopScheduler(): void {
     clearInterval(interval);
   }
   intervals.length = 0;
+
+  // Stop results polling if active
+  if (schedulerState.resultsPollingInterval) {
+    clearInterval(schedulerState.resultsPollingInterval);
+    schedulerState.resultsPollingInterval = null;
+  }
+
   console.log("✅ Scheduler stopped");
 }
 
 /**
- * Fetch today's matches from Football API
+ * Morning fetch - runs at 06:00 UTC daily
+ * Fetches matches and schedules result polling based on kickoff times
  */
-async function fetchTodaysMatches(): Promise<void> {
-  console.log("📥 Fetching today's matches...");
+async function morningFetch(): Promise<void> {
+  console.log("🌅 Morning fetch starting...");
 
   try {
     const matches = await footballApi.getTodaysMatches();
@@ -150,6 +185,42 @@ async function fetchTodaysMatches(): Promise<void> {
         skippedCount > 0 ? `, ${skippedCount} skipped` : ""
       }`
     );
+
+    // Update scheduler state and setup intelligent polling
+    schedulerState.todaysMatches = matches.length;
+
+    if (matches.length === 0) {
+      console.log("📅 No matches today. Sleeping until tomorrow.");
+      stopResultsPolling(); // Ensure polling is stopped
+      return;
+    }
+
+    // Get kickoff range
+    const kickoffRange = db.getTodaysKickoffRange();
+    if (kickoffRange) {
+      schedulerState.firstKickoff = kickoffRange.firstKickoff;
+      schedulerState.lastKickoff = kickoffRange.lastKickoff;
+
+      console.log(`⚽ ${matches.length} matches today`);
+      console.log(`   First kickoff: ${new Date(kickoffRange.firstKickoff * 1000).toISOString()}`);
+      console.log(`   Last kickoff: ${new Date(kickoffRange.lastKickoff * 1000).toISOString()}`);
+
+      // Schedule results polling to start after first match could finish (90 minutes after kickoff)
+      const resultsPollingStart = kickoffRange.firstKickoff + (90 * 60);
+      const now = Math.floor(Date.now() / 1000);
+
+      if (now < resultsPollingStart) {
+        const msUntilPolling = (resultsPollingStart - now) * 1000;
+        console.log(`⏰ Results polling will start in ${Math.floor(msUntilPolling / 60000)} minutes`);
+
+        setTimeout(() => {
+          startResultsPolling();
+        }, msUntilPolling);
+      } else {
+        // Already past start time, start immediately
+        startResultsPolling();
+      }
+    }
   } catch (error) {
     console.error("❌ Failed to fetch matches:", error);
   }
@@ -206,7 +277,186 @@ async function closeExpiredBetting(): Promise<void> {
 }
 
 /**
- * Check for match results and resolve on-chain
+ * Start intelligent results polling
+ * Polls every 15 minutes and auto-stops when all matches are resolved
+ * or 3 hours after the last kickoff
+ */
+function startResultsPolling(): void {
+  if (schedulerState.resultsPollingActive) {
+    console.log("⚠️ Results polling already active");
+    return;
+  }
+
+  console.log("🔍 Starting results polling (every 15 minutes)");
+  schedulerState.resultsPollingActive = true;
+
+  // Poll immediately
+  pollMatchResults();
+
+  // Then poll every 15 minutes
+  schedulerState.resultsPollingInterval = setInterval(() => {
+    pollMatchResults();
+  }, 15 * 60 * 1000); // 15 minutes
+}
+
+/**
+ * Stop results polling
+ */
+function stopResultsPolling(): void {
+  if (!schedulerState.resultsPollingActive) {
+    return;
+  }
+
+  console.log("✅ Stopping results polling - all matches resolved or polling window ended");
+  schedulerState.resultsPollingActive = false;
+
+  if (schedulerState.resultsPollingInterval) {
+    clearInterval(schedulerState.resultsPollingInterval);
+    schedulerState.resultsPollingInterval = null;
+  }
+}
+
+/**
+ * Poll for match results with intelligent stopping
+ * Stops when all matches resolved OR 3 hours after last kickoff
+ */
+async function pollMatchResults(): Promise<void> {
+  const unresolvedMatches = db.getMatchesAwaitingResults();
+
+  // Check if we should stop polling
+  const now = Math.floor(Date.now() / 1000);
+  const pollingEnd = schedulerState.lastKickoff ? schedulerState.lastKickoff + (3 * 60 * 60) : null;
+
+  if (unresolvedMatches.length === 0) {
+    console.log("✅ All matches resolved. Stopping results polling.");
+    stopResultsPolling();
+    return;
+  }
+
+  if (pollingEnd && now > pollingEnd) {
+    console.log("⏰ Polling window ended (3h after last kickoff). Stopping results polling.");
+    stopResultsPolling();
+    return;
+  }
+
+  console.log(`🔍 Checking results for ${unresolvedMatches.length} unresolved matches`);
+
+  // Fetch all today's matches in one API call (more efficient)
+  try {
+    const apiMatches = await footballApi.getTodaysMatches();
+
+    for (const apiMatch of apiMatches) {
+      // Only process finished matches
+      if (!FootballAPIService.isFinished(apiMatch.status)) {
+        // Update to LIVE/IN_PLAY if needed
+        if (FootballAPIService.isLive(apiMatch.status)) {
+          const dbMatch = db.getMatchByApiId(apiMatch.id!);
+          if (dbMatch && dbMatch.status !== "LIVE") {
+            db.updateMatchStatus(dbMatch.id, apiMatch.status);
+            console.log(`🔴 Match ${dbMatch.home_team} vs ${dbMatch.away_team} is now ${apiMatch.status}`);
+          }
+        }
+        continue;
+      }
+
+      const dbMatch = db.getMatchByApiId(apiMatch.id!);
+
+      // Skip if not found or already resolved
+      if (!dbMatch || dbMatch.status === "FINISHED") {
+        continue;
+      }
+
+      await resolveMatchFromAPI(dbMatch, apiMatch);
+    }
+  } catch (error) {
+    console.error("❌ Failed to poll match results:", error);
+  }
+}
+
+/**
+ * Resolve a match from API data
+ */
+async function resolveMatchFromAPI(
+  dbMatch: any,
+  apiMatch: any
+): Promise<void> {
+  const homeScore = apiMatch.score.fullTime.home;
+  const awayScore = apiMatch.score.fullTime.away;
+
+  if (homeScore === null || awayScore === null) {
+    console.warn(`⚠️ Match ${dbMatch.id} finished but no score available`);
+    return;
+  }
+
+  const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+
+  if (outcome === null) {
+    console.error(`❌ Could not determine outcome for match ${dbMatch.id}`);
+    return;
+  }
+
+  // Update local database
+  db.updateMatchResult(dbMatch.id, homeScore, awayScore, outcome);
+
+  // Resolve on-chain if match was created AND contract is available
+  if (
+    dbMatch.on_chain_match_id &&
+    contractServiceInstance &&
+    contractServiceInstance.isContractAvailable()
+  ) {
+    const result = await contractServiceInstance!.resolveMatch(
+      dbMatch.on_chain_match_id,
+      outcome
+    );
+
+    if (result) {
+      // Get pool info for logging
+      const pools = await contractServiceInstance!.getPools(
+        dbMatch.on_chain_match_id
+      );
+      const totalPool = pools ? formatEth(pools.total) : "?";
+
+      console.log(
+        `✅ Resolved ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} ` +
+          `(Outcome: ${Outcome[outcome]}, Pool: ${totalPool} ETH)`
+      );
+
+      // Post result to channel if configured
+      if (botInstance && defaultChannelId) {
+        const winner =
+          outcome === Outcome.HOME
+            ? dbMatch.home_team
+            : outcome === Outcome.AWAY
+            ? dbMatch.away_team
+            : "Draw";
+
+        await botInstance.sendMessage(
+          defaultChannelId,
+          `🏁 **Match Result**
+
+**${dbMatch.home_team} ${homeScore} - ${awayScore} ${dbMatch.away_team}**
+
+✅ Result: ${winner}${outcome !== Outcome.DRAW ? " wins!" : ""}
+💰 Total Pool: ${totalPool} ETH
+
+Winners can now claim using \`/claim\``
+        );
+      }
+    }
+  } else {
+    console.log(
+      `ℹ️ Match ${dbMatch.home_team} vs ${dbMatch.away_team} finished ` +
+        `(${homeScore}-${awayScore})${
+          !contractServiceInstance?.isContractAvailable()
+            ? " (contract not deployed)"
+            : " but was never bet on"
+        }`
+    );
+  }
+}
+
+/**
+ * Check for match results and resolve on-chain (LEGACY - kept for manual trigger)
  */
 async function checkMatchResults(): Promise<void> {
   const matchesAwaiting = db.getMatchesAwaitingResults();
@@ -329,13 +579,13 @@ export async function triggerJob(
 ): Promise<void> {
   switch (job) {
     case "fetch":
-      await fetchTodaysMatches();
+      await morningFetch();
       break;
     case "close":
       await closeExpiredBetting();
       break;
     case "results":
-      await checkMatchResults();
+      await pollMatchResults();
       break;
     case "cleanup":
       cleanupPendingBets();

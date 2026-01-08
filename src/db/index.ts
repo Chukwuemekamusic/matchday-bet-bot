@@ -229,12 +229,41 @@ class DatabaseService {
    */
   getMatchesAwaitingResults(): DBMatch[] {
     const stmt = this.db.prepare(`
-      SELECT * FROM matches 
+      SELECT * FROM matches
       WHERE on_chain_match_id IS NOT NULL
-        AND status IN ('SCHEDULED', 'LIVE')
+        AND status NOT IN ('FINISHED', 'CANCELLED', 'POSTPONED')
         AND result IS NULL
     `);
     return stmt.all() as DBMatch[];
+  }
+
+  /**
+   * Get kickoff time range for today's matches
+   * Returns { firstKickoff, lastKickoff } in Unix timestamp (seconds)
+   * Returns null if no matches
+   */
+  getTodaysKickoffRange(): { firstKickoff: number; lastKickoff: number } | null {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+    const stmt = this.db.prepare(`
+      SELECT MIN(kickoff_time) as first, MAX(kickoff_time) as last
+      FROM matches
+      WHERE kickoff_time >= ? AND kickoff_time < ?
+    `);
+
+    const result = stmt.get(
+      Math.floor(today.getTime() / 1000),
+      Math.floor(tomorrow.getTime() / 1000)
+    ) as { first: number | null; last: number | null };
+
+    if (result.first === null || result.last === null) {
+      return null;
+    }
+
+    return { firstKickoff: result.first, lastKickoff: result.last };
   }
 
   /**

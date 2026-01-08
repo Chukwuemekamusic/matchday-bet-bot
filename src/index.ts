@@ -13,6 +13,7 @@ import {
   truncateAddress,
   timeUntilKickoff,
   isBettingOpen,
+  formatMatchDisplay,
 } from "./utils/format";
 import { Outcome, DBMatch } from "./types";
 import { config } from "./config";
@@ -118,13 +119,7 @@ bot.onSlashCommand("matches", async (handler, { channelId, args }) => {
     message += `${emoji} **${competition}**\n\n`;
 
     for (const match of compMatches) {
-      const time = formatTime(match.kickoff_time);
-      const countdown = timeUntilKickoff(match.kickoff_time);
-      const pool = match.on_chain_match_id ? formatEth(match.total_pool) : "0";
-      const status = isBettingOpen(match.kickoff_time) ? "🟢" : "🔴";
-
-      message += `${status} **#${displayId}** ${match.home_team} vs ${match.away_team}\n`;
-      message += `   ⏰ ${time} (${countdown}) | 💰 ${pool} ETH\n\n`;
+      message += formatMatchDisplay(match, displayId);
       displayId++;
     }
   }
