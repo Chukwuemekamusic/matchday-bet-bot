@@ -27,8 +27,8 @@ const commands = [
     description: "Place a bet on a match outcome",
   },
   {
-    name: "confirm",
-    description: "Confirm your pending bet",
+    name: "pending",
+    description: "Check your pending bet status",
   },
   {
     name: "cancel",
@@ -59,6 +59,38 @@ const commands = [
   {
     name: "fetch",
     description: "Manually fetch today's matches from API",
+  },
+
+  /*//////////////////////////////////////////////////////////////
+                         DEBUG SLASH COMMANDS
+    //////////////////////////////////////////////////////////////*/
+  {
+    name: "debug",
+    description: "🔧 Show bot and contract debug information",
+  },
+  {
+    name: "checkmanager",
+    description: "🔧 Check if bot is registered as match manager",
+  },
+  {
+    name: "contractinfo",
+    description: "🔧 Show contract version and configuration",
+  },
+  {
+    name: "botinfo",
+    description: "🔧 Show bot wallet addresses and balance",
+  },
+  {
+    name: "testread",
+    description: "🔧 Test reading data from contract (next match ID)",
+  },
+  {
+    name: "testcreate",
+    description: "🔧 Test creating a match on-chain (requires manager role)",
+  },
+  {
+    name: "userHasBet",
+    description: "🔧 Test if user has bet on a match",
   },
 ] as const satisfies BotCommand[];
 

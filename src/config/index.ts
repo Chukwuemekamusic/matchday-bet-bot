@@ -19,7 +19,10 @@ function requireEnv(name: string): string {
 export const config = {
   // Contract (on Base) - Optional for pre-deployment
   contract: {
-    address: optionalEnv("CONTRACT_ADDRESS", "0x0000000000000000000000000000000000000000"),
+    address: optionalEnv(
+      "CONTRACT_ADDRESS",
+      "0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947"
+    ),
   },
 
   // Base Chain RPC

@@ -1,4 +1,5 @@
 import { makeTownsBot } from "@towns-protocol/bot";
+import { hexToBytes } from "viem";
 import commands from "./commands";
 import { db } from "./db";
 import { ContractService } from "./services/contract";
@@ -41,7 +42,8 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
 **Betting:**
 • \`/bet <match#> <home|draw|away> <amount>\` - Place a bet
   Example: \`/bet 1 home 0.01\`
-• \`/confirm\` - Confirm your pending bet
+  (You'll get a confirmation button to sign the transaction)
+• \`/pending\` - Check your pending bet status
 • \`/cancel\` - Cancel your pending bet
 
 **Your Bets:**
@@ -51,6 +53,14 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
 **Stats:**
 • \`/stats\` - Show your betting stats
 • \`/leaderboard\` - Show top bettors
+
+**Debug Commands:**
+• \`/debug\` - Show comprehensive debug info
+• \`/checkmanager\` - Check if bot is match manager
+• \`/contractinfo\` - Show contract details
+• \`/botinfo\` - Show bot wallet info
+• \`/testread\` - Test reading from contract
+• \`/testcreate\` - Test creating a match (requires manager)
 
 💰 Stakes: ${config.betting.minStake} - ${config.betting.maxStake} ETH`;
 
@@ -216,127 +226,159 @@ ${
 
 // /bet - Place a bet (step 1: create pending bet)
 bot.onSlashCommand("bet", async (handler, { channelId, args, userId }) => {
-  if (args.length < 3) {
-    await handler.sendMessage(
-      channelId,
-      `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
-Example: \`/bet 1 home 0.01\``
-    );
-    return;
-  }
-
-  const matchNum = parseInt(args[0]);
-  const predictionStr = args[1];
-  const amountStr = args[2];
-
-  // Validate match number
-  if (isNaN(matchNum) || matchNum < 1) {
-    await handler.sendMessage(
-      channelId,
-      "❌ Invalid match number. Use `/matches` to see available matches."
-    );
-    return;
-  }
-
-  // Get match by daily ID
-  const match = db.getMatchByDailyId(matchNum);
-  if (!match) {
-    await handler.sendMessage(
-      channelId,
-      `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
-    );
-    return;
-  }
-
-  // Check if betting is still open
-  if (!isBettingOpen(match.kickoff_time)) {
-    await handler.sendMessage(
-      channelId,
-      "❌ Betting is closed for this match. Kickoff has passed."
-    );
-    return;
-  }
-
-  // Parse prediction
-  const prediction = parseOutcome(predictionStr);
-  if (prediction === null) {
-    await handler.sendMessage(
-      channelId,
-      "❌ Invalid prediction. Use: home, draw, or away"
-    );
-    return;
-  }
-
-  // Parse and validate amount
-  let amount: bigint;
   try {
-    amount = parseEth(amountStr);
-  } catch {
-    await handler.sendMessage(
-      channelId,
-      "❌ Invalid amount. Enter a number like 0.01"
-    );
-    return;
-  }
+    console.log("🎯 /bet command received:", { userId, args, channelId });
 
-  const minStake = parseEth(config.betting.minStake);
-  const maxStake = parseEth(config.betting.maxStake);
-
-  if (amount < minStake) {
-    await handler.sendMessage(
-      channelId,
-      `❌ Minimum bet is ${config.betting.minStake} ETH`
-    );
-    return;
-  }
-
-  if (amount > maxStake) {
-    await handler.sendMessage(
-      channelId,
-      `❌ Maximum bet is ${config.betting.maxStake} ETH`
-    );
-    return;
-  }
-
-  // Check if user already bet on this match (if on-chain and contract available)
-  if (match.on_chain_match_id && contractService.isContractAvailable()) {
-    const hasBet = await contractService.hasUserBet(
-      match.on_chain_match_id,
-      userId
-    );
-    if (hasBet) {
+    if (args.length < 3) {
+      console.log("❌ Invalid args length:", args.length);
       await handler.sendMessage(
         channelId,
-        "❌ You've already placed a bet on this match."
+        `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
+Example: \`/bet 1 home 0.01\``
       );
       return;
     }
-  }
 
-  // Create pending bet
-  db.createPendingBet(userId, match.id, prediction, amountStr);
+    const matchNum = parseInt(args[0]);
+    const predictionStr = args[1];
+    const amountStr = args[2];
 
-  const predictionDisplay =
-    prediction === Outcome.HOME
-      ? `${match.home_team} Win (Home)`
-      : prediction === Outcome.DRAW
-      ? "Draw"
-      : `${match.away_team} Win (Away)`;
+    console.log("📝 Parsed args:", { matchNum, predictionStr, amountStr });
 
-  // Calculate potential winnings if match is on-chain and contract available
-  let potentialWinnings = "";
-  if (match.on_chain_match_id && contractService.isContractAvailable()) {
-    const potential = await contractService.calculatePotentialWinnings(
-      match.on_chain_match_id,
-      prediction,
-      amount
-    );
-    if (potential) {
-      potentialWinnings = `\n💸 Potential Payout: ~${formatEth(potential)} ETH`;
+    // Validate match number
+    if (isNaN(matchNum) || matchNum < 1) {
+      console.log("❌ Invalid match number");
+      await handler.sendMessage(
+        channelId,
+        "❌ Invalid match number. Use `/matches` to see available matches."
+      );
+      return;
     }
-  }
 
-  const message = `⚽ **Bet Confirmation Required**
+    // Get match by daily ID
+    const match = db.getMatchByDailyId(matchNum);
+    console.log(
+      "📊 Match lookup:",
+      match ? `${match.home_team} vs ${match.away_team}` : "NOT FOUND"
+    );
+
+    if (!match) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
+      );
+      return;
+    }
+
+    // Check if betting is still open
+    const bettingOpen = isBettingOpen(match.kickoff_time);
+    console.log(
+      "⏰ Betting open?",
+      bettingOpen,
+      "Kickoff:",
+      new Date(match.kickoff_time * 1000)
+    );
+
+    if (!bettingOpen) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Betting is closed for this match. Kickoff has passed."
+      );
+      return;
+    }
+
+    // Parse prediction
+    const prediction = parseOutcome(predictionStr);
+    console.log("🎲 Prediction parsed:", prediction, "from", predictionStr);
+
+    if (prediction === null) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Invalid prediction. Use: home, draw, or away"
+      );
+      return;
+    }
+
+    // Parse and validate amount
+    let amount: bigint;
+    try {
+      amount = parseEth(amountStr);
+      console.log("💰 Amount parsed:", formatEth(amount), "ETH");
+    } catch (error) {
+      console.log("❌ Failed to parse amount:", error);
+      await handler.sendMessage(
+        channelId,
+        "❌ Invalid amount. Enter a number like 0.01"
+      );
+      return;
+    }
+
+    const minStake = parseEth(config.betting.minStake);
+    const maxStake = parseEth(config.betting.maxStake);
+
+    if (amount < minStake) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Minimum bet is ${config.betting.minStake} ETH`
+      );
+      return;
+    }
+
+    if (amount > maxStake) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Maximum bet is ${config.betting.maxStake} ETH`
+      );
+      return;
+    }
+
+    // Check if user already bet on this match (if on-chain and contract available)
+    if (match.on_chain_match_id && contractService.isContractAvailable()) {
+      const hasBet = await contractService.hasUserBet(
+        match.on_chain_match_id,
+        userId
+      );
+      if (hasBet) {
+        await handler.sendMessage(
+          channelId,
+          "❌ You've already placed a bet on this match."
+        );
+        return;
+      }
+    }
+
+    // Create pending bet
+    db.createPendingBet(userId, match.id, prediction, amountStr);
+
+    const predictionDisplay =
+      prediction === Outcome.HOME
+        ? `${match.home_team} Win (Home)`
+        : prediction === Outcome.DRAW
+        ? "Draw"
+        : `${match.away_team} Win (Away)`;
+
+    // Calculate potential winnings if match is on-chain and contract available
+    let potentialWinnings = "";
+    if (match.on_chain_match_id && contractService.isContractAvailable()) {
+      const potential = await contractService.calculatePotentialWinnings(
+        match.on_chain_match_id,
+        prediction,
+        amount
+      );
+      if (potential) {
+        potentialWinnings = `\n💸 Potential Payout: ~${formatEth(
+          potential
+        )} ETH`;
+      }
+    }
+
+    const interactionId = `bet-${match.id}-${userId}-${Date.now()}`;
+
+    // Store interaction ID with pending bet
+    db.updatePendingBetInteractionId(userId, interactionId);
+    console.log("💾 Pending bet saved with interaction ID:", interactionId);
+
+    const message = `⚽ **Confirm Your Bet**
 
 **Match:** ${match.home_team} vs ${match.away_team}
 **Your Pick:** ${predictionDisplay}
@@ -345,121 +387,126 @@ ${potentialWinnings}
 
 ⚠️ This will transfer ${amountStr} ETH from your wallet.
 
-Reply \`/confirm\` to place this bet
-Reply \`/cancel\` to cancel
-
 _This pending bet expires in 5 minutes._`;
 
-  await handler.sendMessage(channelId, message);
+    // Send interactive message with buttons
+    try {
+      console.log("📤 Attempting to send interaction request...");
+      console.log("  - channelId:", channelId);
+      console.log("  - interactionId:", interactionId);
+      console.log("  - userId:", userId);
+
+      await handler.sendInteractionRequest(
+        channelId,
+        {
+          case: "form",
+          value: {
+            id: interactionId,
+            title: "Confirm Bet",
+            content: message,
+            components: [
+              {
+                id: "confirm",
+                component: {
+                  case: "button",
+                  value: {
+                    label: "Confirm & Sign",
+                    style: 1, // PRIMARY style
+                  },
+                },
+              },
+              {
+                id: "cancel",
+                component: {
+                  case: "button",
+                  value: {
+                    label: "Cancel",
+                    style: 2, // SECONDARY style
+                  },
+                },
+              },
+            ],
+          },
+        } as any, // Type assertion for complex protobuf types
+        hexToBytes(userId as `0x${string}`) // recipient
+      );
+
+      console.log("✅ Interaction request sent successfully");
+    } catch (error) {
+      console.error("❌ Failed to send interaction request:", error);
+      console.error("Error details:", JSON.stringify(error, null, 2));
+
+      // Fallback: send simple message
+      await handler.sendMessage(
+        channelId,
+        `⚽ **Bet Saved!**
+
+**Match:** ${match.home_team} vs ${match.away_team}
+**Your Pick:** ${predictionDisplay}
+**Stake:** ${amountStr} ETH
+
+❌ Interactive buttons are not working. Please check the error logs or try again later.
+
+_This pending bet expires in 5 minutes._`
+      );
+    }
+  } catch (error) {
+    console.error("❌ FATAL ERROR in /bet handler:", error);
+    console.error("Stack trace:", error);
+
+    try {
+      await handler.sendMessage(
+        channelId,
+        "❌ An unexpected error occurred. Please try again or contact support."
+      );
+    } catch (msgError) {
+      console.error("❌ Failed to send error message:", msgError);
+    }
+  }
 });
 
-// /confirm - Confirm pending bet (step 2)
-bot.onSlashCommand("confirm", async (handler, { channelId, userId }) => {
+// /pending - Check pending bet status
+bot.onSlashCommand("pending", async (handler, { channelId, userId }) => {
   const pending = db.getPendingBet(userId);
 
   if (!pending) {
     await handler.sendMessage(
       channelId,
-      "❌ No pending bet found. Use `/bet` to place a new bet."
+      "ℹ️ You don't have any pending bets.\n\nUse `/bet` to place a new bet!"
     );
     return;
   }
 
   const match = db.getMatchById(pending.match_id);
   if (!match) {
-    db.clearPendingBet(userId);
-    await handler.sendMessage(channelId, "❌ Match no longer available.");
-    return;
-  }
-
-  // Check if betting is still open
-  if (!isBettingOpen(match.kickoff_time)) {
-    db.clearPendingBet(userId);
     await handler.sendMessage(
       channelId,
-      "❌ Betting is now closed for this match."
+      "❌ Your pending bet references a match that no longer exists."
     );
-    return;
-  }
-
-  // Check if contract is available
-  if (!contractService.isContractAvailable()) {
-    // Clear pending bet
     db.clearPendingBet(userId);
-
-    const predictionDisplay = formatOutcome(pending.prediction);
-
-    const message = `⏳ **Bet Pending Contract Deployment**
-
-**Match:** ${match.home_team} vs ${match.away_team}
-**Your Pick:** ${predictionDisplay}
-**Stake:** ${pending.amount} ETH
-
-The betting smart contract is not yet deployed to Base mainnet.
-
-🚀 **What's Next:**
-• Your bet selection has been noted
-• Once the contract is live, you'll be able to place bets
-• We'll announce when betting goes live!
-
-Stay tuned! In the meantime, you can:
-• Browse upcoming matches with \`/matches\`
-• Check your stats with \`/stats\`
-• View the leaderboard with \`/leaderboard\`
-
-_Thank you for your patience as we prepare for launch! ⚡_`;
-
-    await handler.sendMessage(channelId, message);
     return;
   }
-
-  // Create match on-chain if not exists
-  let onChainMatchId = match.on_chain_match_id;
-  if (!onChainMatchId) {
-    const result = await contractService.createMatch(
-      match.home_team,
-      match.away_team,
-      match.competition,
-      match.kickoff_time
-    );
-
-    if (!result) {
-      await handler.sendMessage(
-        channelId,
-        "❌ Failed to create match on-chain. Please try again."
-      );
-      return;
-    }
-
-    onChainMatchId = result.matchId;
-    db.setOnChainMatchId(match.id, onChainMatchId);
-    console.log(`Match ${match.id} created on-chain with ID ${onChainMatchId}`);
-  }
-
-  // Clear pending bet
-  db.clearPendingBet(userId);
 
   const predictionDisplay = formatOutcome(pending.prediction);
+  const expiresIn = Math.max(
+    0,
+    pending.expires_at - Math.floor(Date.now() / 1000)
+  );
+  const expiresMinutes = Math.floor(expiresIn / 60);
+  const expiresSeconds = expiresIn % 60;
 
-  const message = `✅ **Bet Ready to Submit!**
+  const message = `⏳ **Your Pending Bet**
 
 **Match:** ${match.home_team} vs ${match.away_team}
 **Your Pick:** ${predictionDisplay}
 **Stake:** ${pending.amount} ETH
 
-📝 **Transaction Details:**
-• Contract: \`${contractService.getContractAddress()}\`
-• Match ID: ${onChainMatchId}
-• Value: ${pending.amount} ETH
+**Expires in:** ${expiresMinutes}m ${expiresSeconds}s
 
-Please sign the transaction in your wallet to complete the bet.
-
-_Note: The bot will detect your transaction and confirm once processed._`;
+To complete your bet, click the "Confirm & Sign" button in the message above.
+To cancel, use \`/cancel\`.`;
 
   await handler.sendMessage(channelId, message);
-
-  // Record the bet attempt in stats
-  db.recordBet(userId, pending.amount);
 });
 
 // /cancel - Cancel pending bet
@@ -671,13 +718,289 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
 
     await handler.sendMessage(
       channelId,
-      `✅ Fetched ${matches.length} matches (${newCount} new${skippedCount > 0 ? `, ${skippedCount} skipped` : ""})`
+      `✅ Fetched ${matches.length} matches (${newCount} new${
+        skippedCount > 0 ? `, ${skippedCount} skipped` : ""
+      })`
     );
   } catch (error) {
     await handler.sendMessage(
       channelId,
       "❌ Failed to fetch matches. Check API configuration."
     );
+  }
+});
+
+// ==================== INTERACTION HANDLERS ====================
+
+// Handle button clicks and form submissions
+bot.onInteractionResponse(async (handler, event) => {
+  const { response, channelId, userId } = event;
+
+  // Handle form interactions (buttons)
+  if (response.payload.content?.case === "form") {
+    const form = response.payload.content.value;
+    const requestId = form.requestId;
+
+    // Find the pending bet for this interaction
+    const pendingBet = db.getPendingBetByInteractionId(requestId);
+
+    if (!pendingBet) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Bet expired or already processed. Please place a new bet with `/bet`."
+      );
+      return;
+    }
+
+    // Find which button was clicked
+    for (const component of form.components) {
+      if (component.component.case === "button") {
+        // Handle confirm button
+        if (component.id === "confirm") {
+          // Get the match
+          const match = db.getMatchById(pendingBet.match_id);
+          if (!match) {
+            db.clearPendingBet(userId);
+            await handler.sendMessage(
+              channelId,
+              "❌ Match no longer available."
+            );
+            return;
+          }
+
+          // Check if betting is still open
+          if (!isBettingOpen(match.kickoff_time)) {
+            db.clearPendingBet(userId);
+            await handler.sendMessage(
+              channelId,
+              "❌ Betting is now closed for this match."
+            );
+            return;
+          }
+
+          // Check if contract is available
+          if (!contractService.isContractAvailable()) {
+            db.clearPendingBet(userId);
+            await handler.sendMessage(
+              channelId,
+              "❌ Smart contract is not yet deployed. Please try again once the contract is live."
+            );
+            return;
+          }
+
+          // Create match on-chain if not exists
+          let onChainMatchId = match.on_chain_match_id;
+          if (!onChainMatchId) {
+            console.log(
+              `📝 Match not yet on-chain. Creating match: ${match.home_team} vs ${match.away_team}`
+            );
+
+            const result = await contractService.createMatch(
+              match.home_team,
+              match.away_team,
+              match.competition,
+              match.kickoff_time
+            );
+
+            // Handle errors with specific messages
+            if ("error" in result && result.error) {
+              const errorType = result.errorType;
+              const errorMsg = result.error;
+
+              console.error(
+                `❌ Match creation failed: ${errorType} - ${errorMsg}`
+              );
+
+              let userMessage = `❌ **Unable to Create Match**\n\n${errorMsg}`;
+
+              // Add specific instructions based on error type
+              if (errorType === "INSUFFICIENT_GAS") {
+                userMessage += `\n\n**What to do:**\n1. Admin needs to fund the bot treasury\n2. Your pending bet is saved\n3. Try clicking "Confirm & Sign" again in a few minutes`;
+              } else if (errorType === "NOT_MATCH_MANAGER") {
+                userMessage += `\n\n**What to do:**\n1. Admin needs to register bot as match manager\n2. Run \`/checkmanager\` for instructions\n3. Your pending bet is saved\n4. Try clicking "Confirm & Sign" again after fixing`;
+              } else if (errorType === "NONCE_ERROR") {
+                userMessage += `\n\n**What to do:**\nJust wait a few seconds and click "Confirm & Sign" again.`;
+              } else if (errorType === "RPC_TIMEOUT") {
+                userMessage += `\n\n**What to do:**\nThe network is busy. Wait a moment and click "Confirm & Sign" again.`;
+              } else {
+                userMessage += `\n\n**What to do:**\n1. Check bot logs for details\n2. Your pending bet is saved\n3. Try again or contact support`;
+              }
+
+              userMessage += `\n\n_Your pending bet expires in 5 minutes. Use \`/cancel\` to cancel it._`;
+
+              await handler.sendMessage(channelId, userMessage);
+              // Don't clear pending bet - user can retry
+              return;
+            }
+
+            // Success - we have a match ID
+            if (!result.matchId) {
+              await handler.sendMessage(
+                channelId,
+                "❌ Match creation succeeded but no match ID returned. Please contact support."
+              );
+              return;
+            }
+
+            onChainMatchId = result.matchId;
+            db.setOnChainMatchId(match.id, onChainMatchId);
+            console.log(
+              `✅ Match ${match.id} created on-chain with ID ${onChainMatchId}, tx: ${result.txHash}`
+            );
+
+            // Notify user that match was created
+            await handler.sendMessage(
+              channelId,
+              `✅ Match created on-chain! Now sending your bet transaction...`
+            );
+          }
+
+          // At this point, onChainMatchId must be set
+          if (!onChainMatchId) {
+            await handler.sendMessage(
+              channelId,
+              "❌ Match ID not available. Please try again."
+            );
+            return;
+          }
+
+          // Generate transaction for user to sign
+          const calldata = contractService.encodePlaceBet(
+            onChainMatchId,
+            pendingBet.prediction
+          );
+
+          const amount = parseEth(pendingBet.amount);
+
+          const txId = `tx-${onChainMatchId}-${userId}-${Date.now()}`;
+
+          // Send transaction request to user
+          await handler.sendInteractionRequest(
+            channelId,
+            {
+              case: "transaction",
+              value: {
+                id: txId,
+                title: `Bet on ${match.home_team} vs ${match.away_team}`,
+                content: {
+                  case: "evm",
+                  value: {
+                    chainId: "8453", // Base mainnet
+                    to: contractService.getContractAddress(),
+                    value: amount.toString(),
+                    data: calldata,
+                  },
+                },
+              },
+            } as any, // Type assertion for complex protobuf types
+            hexToBytes(userId as `0x${string}`) // recipient
+          );
+
+          await handler.sendMessage(
+            channelId,
+            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet.\n\n_I'll confirm once the transaction is mined._"
+          );
+
+          // Note: Bet stats will be recorded after transaction is confirmed
+          // This happens in the transaction response handler below
+
+          return;
+        }
+
+        // Handle cancel button
+        if (component.id === "cancel") {
+          db.clearPendingBet(userId);
+          await handler.sendMessage(channelId, "✅ Bet cancelled.");
+          return;
+        }
+      }
+    }
+  }
+
+  // Handle transaction responses
+  if (response.payload.content?.case === "transaction") {
+    const txResponse = response.payload.content.value;
+
+    if (txResponse.txHash) {
+      const txHash = txResponse.txHash;
+
+      // Send immediate confirmation
+      await handler.sendMessage(
+        channelId,
+        `⏳ **Transaction Submitted!**
+
+Waiting for confirmation on Base...
+
+🔗 [View on Basescan](https://basescan.org/tx/${txHash})`
+      );
+
+      // Wait for transaction to be mined
+      try {
+        const receipt = await contractService[
+          "publicClient"
+        ].waitForTransactionReceipt({
+          hash: txHash as `0x${string}`,
+          confirmations: 1,
+        });
+
+        if (receipt.status === "success") {
+          // Get match info from the pending bet (if still available)
+          const pendingBet = db.getPendingBet(userId);
+          let matchInfo = "";
+
+          if (pendingBet) {
+            const match = db.getMatchById(pendingBet.match_id);
+            if (match) {
+              const predictionDisplay = formatOutcome(pendingBet.prediction);
+              matchInfo = `\n\n**Match:** ${match.home_team} vs ${match.away_team}\n**Your Prediction:** ${predictionDisplay}\n**Stake:** ${pendingBet.amount} ETH`;
+
+              // Record the bet in user stats
+              db.recordBet(userId, pendingBet.amount);
+
+              // Clear the pending bet now that it's confirmed
+              db.clearPendingBet(userId);
+            }
+          }
+
+          await handler.sendMessage(
+            channelId,
+            `🎯 **Bet Confirmed!**
+
+<@${userId}> your bet has been placed successfully!${matchInfo}
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+            {
+              mentions: [{ userId, displayName: userId.slice(0, 8) }],
+            }
+          );
+
+          console.log(`✅ Bet confirmed for ${userId}: ${txHash}`);
+        } else {
+          await handler.sendMessage(
+            channelId,
+            `❌ **Transaction Failed**
+
+Your bet was not placed. The transaction was reverted.
+
+🔗 [View on Basescan](https://basescan.org/tx/${txHash})`
+          );
+
+          console.log(`❌ Bet transaction failed for ${userId}: ${txHash}`);
+        }
+      } catch (error) {
+        console.error("Failed to wait for transaction:", error);
+        await handler.sendMessage(
+          channelId,
+          `⚠️ **Unable to Confirm**
+
+I couldn't verify your transaction status. Please check Basescan:
+
+🔗 [View Transaction](https://basescan.org/tx/${txHash})
+
+Use \`/mybets\` to verify your bet was placed.`
+        );
+      }
+    }
   }
 });
 
@@ -726,6 +1049,343 @@ function getCompetitionEmoji(code: string): string {
   };
   return emojiMap[code] || "⚽";
 }
+
+/*//////////////////////////////////////////////////////////////
+                         DEBUG SLASH COMMANDS
+    //////////////////////////////////////////////////////////////*/
+
+// /debug - Comprehensive debug information
+bot.onSlashCommand("debug", async (handler, { channelId }) => {
+  try {
+    const [
+      isManager,
+      version,
+      owner,
+      nextMatchId,
+      stakeLimits,
+      platformFee,
+      accumulatedFees,
+      botBalance,
+    ] = await Promise.all([
+      contractService.isBotMatchManager(),
+      contractService.getVersion(),
+      contractService.getOwner(),
+      contractService.getNextMatchId(),
+      contractService.getStakeLimits(),
+      contractService.getPlatformFeeBps(),
+      contractService.getAccumulatedFees(),
+      contractService.getBotBalance(),
+    ]);
+
+    const message = `🔧 **Debug Information**
+
+**Bot Addresses:**
+• Signer (EOA): \`${contractService.getBotAddress()}\`
+• Treasury (Smart Account): \`${contractService.getBotTreasuryAddress()}\`
+• Balance: ${formatEth(botBalance)} ETH
+
+**Contract Info:**
+• Address: \`${contractService.getContractAddress()}\`
+• Version: ${version || "❌ Failed to read"}
+• Owner: \`${owner ? truncateAddress(owner) : "❌ Failed to read"}\`
+
+**Bot Status:**
+• Is Match Manager: ${isManager ? "✅ Yes" : "❌ No"}
+• Can Create Matches: ${isManager ? "✅ Yes" : "❌ No"}
+
+**Contract Config:**
+• Next Match ID: ${nextMatchId}
+• Min Stake: ${formatEth(stakeLimits.min)} ETH
+• Max Stake: ${formatEth(stakeLimits.max)} ETH
+• Platform Fee: ${platformFee ? Number(platformFee) / 100 : "?"}%
+• Accumulated Fees: ${accumulatedFees ? formatEth(accumulatedFees) : "?"} ETH
+
+**RPC:**
+• URL: ${config.chain.rpcUrl}
+
+${
+  !isManager
+    ? "\n⚠️ **WARNING:** Bot is NOT a match manager! Contract interactions will fail."
+    : ""
+}`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Debug command error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ Failed to fetch debug info: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+});
+
+// /checkmanager - Check if bot is match manager
+bot.onSlashCommand("checkmanager", async (handler, { channelId }) => {
+  try {
+    const isManager = await contractService.isBotMatchManager();
+    const botAddress = contractService.getBotTreasuryAddress();
+
+    const message = `🔍 **Match Manager Check**
+
+**Bot Treasury Address:**
+\`${botAddress}\`
+
+**Status:**
+${
+  isManager
+    ? "✅ Bot IS registered as a match manager"
+    : "❌ Bot is NOT registered as a match manager"
+}
+
+${
+  !isManager
+    ? `\n**To fix this, run:**
+\`\`\`bash
+cast send ${contractService.getContractAddress()} \\
+  "addMatchManager(address)" ${botAddress} \\
+  --rpc-url $BASE_RPC_URL \\
+  --private-key $OWNER_PRIVATE_KEY
+\`\`\``
+    : ""
+}`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Check manager error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ Failed to check manager status: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+});
+
+// /contractinfo - Show contract version and config
+bot.onSlashCommand("contractinfo", async (handler, { channelId }) => {
+  try {
+    const [
+      version,
+      owner,
+      nextMatchId,
+      stakeLimits,
+      platformFee,
+      accumulatedFees,
+    ] = await Promise.all([
+      contractService.getVersion(),
+      contractService.getOwner(),
+      contractService.getNextMatchId(),
+      contractService.getStakeLimits(),
+      contractService.getPlatformFeeBps(),
+      contractService.getAccumulatedFees(),
+    ]);
+
+    const message = `📋 **Contract Information**
+
+**Contract Address:**
+\`${contractService.getContractAddress()}\`
+
+**Version:**
+${version || "❌ Failed to read"}
+
+**Owner:**
+\`${owner || "❌ Failed to read"}\`
+
+**Configuration:**
+• Next Match ID: ${nextMatchId}
+• Min Stake: ${formatEth(stakeLimits.min)} ETH
+• Max Stake: ${formatEth(stakeLimits.max)} ETH
+• Platform Fee: ${platformFee ? Number(platformFee) / 100 : "?"}%
+• Accumulated Fees: ${accumulatedFees ? formatEth(accumulatedFees) : "?"} ETH
+
+**View on BaseScan:**
+https://basescan.org/address/${contractService.getContractAddress()}`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Contract info error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ Failed to fetch contract info: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+});
+
+// /botinfo - Show bot wallet info
+bot.onSlashCommand("botinfo", async (handler, { channelId }) => {
+  try {
+    const balance = await contractService.getBotBalance();
+    const signerAddress = contractService.getBotAddress();
+    const treasuryAddress = contractService.getBotTreasuryAddress();
+
+    const message = `🤖 **Bot Wallet Information**
+
+**Signer Address (EOA):**
+\`${signerAddress}\`
+• This address signs transactions
+• View: https://basescan.org/address/${signerAddress}
+
+**Treasury Address (Smart Account):**
+\`${treasuryAddress}\`
+• This address executes transactions and holds funds
+• Balance: ${formatEth(balance)} ETH
+• View: https://basescan.org/address/${treasuryAddress}
+
+${
+  balance < BigInt(10 ** 15)
+    ? "\n⚠️ **WARNING:** Low balance! Fund the treasury address to enable contract interactions."
+    : ""
+}`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Bot info error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ Failed to fetch bot info: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+});
+
+// /testread - Test reading from contract
+bot.onSlashCommand("testread", async (handler, { channelId }) => {
+  try {
+    await handler.sendMessage(channelId, "🔄 Testing contract read...");
+
+    const startTime = Date.now();
+    const nextMatchId = await contractService.getNextMatchId();
+    const duration = Date.now() - startTime;
+
+    const message = `✅ **Contract Read Test Successful**
+
+**Function:** \`nextMatchId()\`
+**Result:** ${nextMatchId}
+**Duration:** ${duration}ms
+**RPC:** ${config.chain.rpcUrl}
+
+This confirms the bot can read from the contract! 🎉`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Test read error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **Contract Read Test Failed**
+
+**Error:** ${error instanceof Error ? error.message : "Unknown error"}
+
+This means the bot cannot read from the contract. Check:
+• Contract address is correct
+• RPC URL is accessible
+• Contract is deployed at the address`
+    );
+  }
+});
+
+// /testcreate - Test creating a match (requires manager role)
+bot.onSlashCommand("testcreate", async (handler, { channelId }) => {
+  try {
+    // Check if bot is manager first
+    const isManager = await contractService.isBotMatchManager();
+    if (!isManager) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Cannot Test Match Creation**
+
+Bot is not registered as a match manager.
+Use \`/checkmanager\` for instructions on how to fix this.`
+      );
+      return;
+    }
+
+    await handler.sendMessage(
+      channelId,
+      "🔄 Testing match creation on-chain...\nThis will create a test match with kickoff in 24 hours."
+    );
+
+    const kickoffTime = Math.floor(Date.now() / 1000) + 86400; // 24 hours from now
+    const result = await contractService.createMatch(
+      "Test Team A",
+      "Test Team B",
+      "Test League",
+      kickoffTime
+    );
+
+    if (!result) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Match Creation Failed**
+
+Check the bot logs for details.
+Possible issues:
+• Insufficient gas in treasury
+• Transaction reverted
+• RPC issues`
+      );
+      return;
+    }
+
+    const message = `✅ **Match Creation Test Successful!**
+
+**Match ID:** ${result.matchId}
+**Transaction:** \`${result.txHash}\`
+**Teams:** Test Team A vs Test Team B
+**Kickoff:** ${formatTime(kickoffTime)}
+
+**View on BaseScan:**
+https://basescan.org/tx/${result.txHash}
+
+This confirms the bot can write to the contract! 🎉
+
+⚠️ This was a test match. You may want to cancel it using the contract's \`cancelMatch\` function.`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Test create error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **Match Creation Test Failed**
+
+**Error:** ${error instanceof Error ? error.message : "Unknown error"}
+
+Check:
+• Bot has match manager role
+• Treasury has sufficient ETH for gas
+• RPC is working
+• Contract is not paused`
+    );
+  }
+});
+
+// /userHasBet - Test if user has bet on a match
+bot.onSlashCommand("userHasBet", async (handler, { channelId, args }) => {
+  try {
+    const matchId = parseInt(args[0]);
+    const userAddress = args[1];
+    const hasBet = await contractService.hasUserBet(matchId, userAddress);
+    await handler.sendMessage(
+      channelId,
+      `User ${userAddress} has ${hasBet ? "" : "not"} bet on match ${matchId}`
+    );
+  } catch (error) {
+    console.error("User has bet error:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **User Has Bet Test Failed**
+
+**Error:** ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+});
+/*//////////////////////////////////////////////////////////////
+                         START BOT
+    //////////////////////////////////////////////////////////////*/
 
 const app = bot.start();
 

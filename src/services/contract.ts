@@ -127,6 +127,59 @@ const CONTRACT_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "platformFeeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "getBetCounts",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      { name: "homeBets", type: "uint256" },
+      { name: "drawBets", type: "uint256" },
+      { name: "awayBets", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "matchManagers",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "isMatchManager",
+    stateMutability: "view",
+    inputs: [{ name: "manager", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "accumulatedFees",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "version",
+    stateMutability: "pure",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
 
   // Write functions
   {
@@ -200,6 +253,13 @@ const CONTRACT_ABI = [
     name: "claimRefund",
     stateMutability: "nonpayable",
     inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "emergencyPause",
+    stateMutability: "nonpayable",
+    inputs: [],
     outputs: [],
   },
 
@@ -454,6 +514,28 @@ class ContractService {
   }
 
   /**
+   * Get bet counts for a match
+   */
+  async getBetCounts(matchId: number): Promise<{
+    home: bigint;
+    draw: bigint;
+    away: bigint;
+  } | null> {
+    try {
+      const [home, draw, away] = (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "getBetCounts",
+        args: [BigInt(matchId)],
+      })) as [bigint, bigint, bigint];
+      return { home, draw, away };
+    } catch (error) {
+      console.error(`Failed to get bet counts for match ${matchId}`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get stake limits
    */
   async getStakeLimits(): Promise<{ min: bigint; max: bigint }> {
@@ -472,6 +554,94 @@ class ContractService {
     return { min, max };
   }
 
+  /**
+   * Check if an address is a match manager
+   */
+  async isMatchManager(address: Address): Promise<boolean> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "isMatchManager",
+        args: [address],
+      })) as boolean;
+    } catch (error) {
+      console.error(`Failed to check if ${address} is match manager`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if bot is a match manager
+   */
+  async isBotMatchManager(): Promise<boolean> {
+    return this.isMatchManager(this.bot.appAddress as Address);
+  }
+
+  /**
+   * Get contract owner address
+   */
+  async getOwner(): Promise<string | null> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "owner",
+      })) as string;
+    } catch (error) {
+      console.error("Failed to get contract owner", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get contract version
+   */
+  async getVersion(): Promise<string | null> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "version",
+      })) as string;
+    } catch (error) {
+      console.error("Failed to get contract version", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get platform fee in basis points
+   */
+  async getPlatformFeeBps(): Promise<bigint | null> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "platformFeeBps",
+      })) as bigint;
+    } catch (error) {
+      console.error("Failed to get platform fee", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get accumulated fees
+   */
+  async getAccumulatedFees(): Promise<bigint | null> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "accumulatedFees",
+      })) as bigint;
+    } catch (error) {
+      console.error("Failed to get accumulated fees", error);
+      return null;
+    }
+  }
+
   // ==================== WRITE FUNCTIONS ====================
 
   /**
@@ -482,9 +652,29 @@ class ContractService {
     awayTeam: string,
     competition: string,
     kickoffTime: number
-  ): Promise<{ matchId: number; txHash: string } | null> {
+  ): Promise<
+    | { matchId: number; txHash: string; error?: never }
+    | { matchId?: never; txHash?: never; error: string; errorType: string }
+  > {
     try {
       console.log(`Creating match: ${homeTeam} vs ${awayTeam}`);
+
+      // Pre-flight checks
+      const balance = await this.getBotBalance();
+      if (balance < BigInt(10 ** 15)) {
+        // Less than 0.001 ETH
+        console.error(
+          `Insufficient balance: ${balance} wei (${
+            Number(balance) / 10 ** 18
+          } ETH)`
+        );
+        return {
+          error: `Bot treasury has insufficient gas. Balance: ${
+            Number(balance) / 10 ** 18
+          } ETH. Please fund ${this.bot.appAddress}`,
+          errorType: "INSUFFICIENT_GAS",
+        };
+      }
 
       const hash = await execute(this.bot.viem, {
         address: this.bot.appAddress,
@@ -505,6 +695,15 @@ class ContractService {
       const receipt = await this.publicClient.waitForTransactionReceipt({
         hash,
       });
+
+      // Check if transaction was successful
+      if (receipt.status === "reverted") {
+        console.error(`Match creation transaction reverted: ${hash}`);
+        return {
+          error: `Transaction reverted. The bot may not be a match manager. Check with /checkmanager`,
+          errorType: "TRANSACTION_REVERTED",
+        };
+      }
 
       // Parse the MatchCreated event to get the match ID
       const matchCreatedEvent = receipt.logs.find((log) => {
@@ -529,9 +728,52 @@ class ContractService {
       // Fallback: get the next match ID - 1
       const nextId = await this.getNextMatchId();
       return { matchId: nextId - 1, txHash: hash };
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Failed to create match on-chain`, error);
-      return null;
+
+      // Parse specific error types
+      const errorMessage = error?.message || String(error);
+
+      // Check for specific error patterns
+      if (errorMessage.includes("insufficient funds")) {
+        return {
+          error: `Insufficient gas in bot treasury. Please fund ${this.bot.appAddress}`,
+          errorType: "INSUFFICIENT_GAS",
+        };
+      }
+
+      if (
+        errorMessage.includes("NotMatchManager") ||
+        errorMessage.includes("Ownable")
+      ) {
+        return {
+          error: `Bot is not registered as a match manager. Use /checkmanager for instructions.`,
+          errorType: "NOT_MATCH_MANAGER",
+        };
+      }
+
+      if (errorMessage.includes("nonce")) {
+        return {
+          error: `Transaction nonce error. Please try again in a few seconds.`,
+          errorType: "NONCE_ERROR",
+        };
+      }
+
+      if (
+        errorMessage.includes("timeout") ||
+        errorMessage.includes("timed out")
+      ) {
+        return {
+          error: `RPC timeout. The network may be congested. Please try again.`,
+          errorType: "RPC_TIMEOUT",
+        };
+      }
+
+      // Generic error
+      return {
+        error: `Failed to create match: ${errorMessage.slice(0, 100)}`,
+        errorType: "UNKNOWN",
+      };
     }
   }
 
@@ -681,10 +923,7 @@ class ContractService {
       console.log(`Successfully resolved ${matches.length} matches in batch`);
       return { txHash: hash };
     } catch (error) {
-      console.error(
-        `Failed to batch resolve ${matches.length} matches`,
-        error
-      );
+      console.error(`Failed to batch resolve ${matches.length} matches`, error);
       return null;
     }
   }
@@ -720,6 +959,53 @@ class ContractService {
     } catch (error) {
       console.error(`Failed to cancel match ${matchId}`, error);
       return null;
+    }
+  }
+
+  // ==================== EVENT POLLING ====================
+  // NOTE: Event polling via RPC is currently disabled due to rate limits on free tier.
+  // The bot now uses transaction response handling in onInteractionResponse for instant confirmations.
+  // This method is reserved for future subgraph integration, which will provide efficient
+  // historical event queries without RPC limitations.
+
+  /**
+   * Get recent BetPlaced events
+   * Polls for events from a specific block range
+   *
+   * @deprecated Currently unused. Reserved for future subgraph integration.
+   */
+  async getRecentBetEvents(
+    fromBlock: bigint,
+    toBlock: bigint
+  ): Promise<
+    Array<{
+      matchId: number;
+      user: string;
+      prediction: Outcome;
+      amount: bigint;
+      txHash: string;
+      blockNumber: bigint;
+    }>
+  > {
+    try {
+      const logs = await this.publicClient.getLogs({
+        address: this.contractAddress,
+        event: CONTRACT_ABI.find((item) => item.name === "BetPlaced")!,
+        fromBlock,
+        toBlock,
+      });
+
+      return logs.map((log) => ({
+        matchId: Number(log.args.matchId),
+        user: log.args.bettor as string,
+        prediction: log.args.prediction as Outcome,
+        amount: log.args.amount as bigint,
+        txHash: log.transactionHash,
+        blockNumber: log.blockNumber,
+      }));
+    } catch (error) {
+      console.error("Failed to fetch BetPlaced events", error);
+      return [];
     }
   }
 

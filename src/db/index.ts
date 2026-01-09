@@ -60,9 +60,11 @@ class DatabaseService {
         amount TEXT NOT NULL,
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         expires_at INTEGER NOT NULL,
+        tx_hash TEXT,
+        interaction_id TEXT,
         FOREIGN KEY (match_id) REFERENCES matches(id)
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_pending_user ON pending_bets(user_address);
     `);
 
@@ -98,6 +100,25 @@ class DatabaseService {
     } catch (error) {
       // Column already exists (fresh database or already migrated)
       // This is expected and safe to ignore
+    }
+
+    // Migrate existing databases: Add tx_hash and interaction_id columns to pending_bets
+    try {
+      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN tx_hash TEXT`);
+      console.log("✅ Migration: Added tx_hash column to pending_bets table");
+    } catch (error) {
+      // Column already exists
+    }
+
+    try {
+      this.db.exec(
+        `ALTER TABLE pending_bets ADD COLUMN interaction_id TEXT`
+      );
+      console.log(
+        "✅ Migration: Added interaction_id column to pending_bets table"
+      );
+    } catch (error) {
+      // Column already exists
     }
 
     console.log("Database initialized successfully");
@@ -423,6 +444,41 @@ class DatabaseService {
       WHERE user_address = ? AND expires_at > ?
     `);
     return stmt.get(userAddress, now) as PendingBet | undefined;
+  }
+
+  /**
+   * Update pending bet with interaction ID
+   */
+  updatePendingBetInteractionId(
+    userAddress: string,
+    interactionId: string
+  ): void {
+    const stmt = this.db.prepare(`
+      UPDATE pending_bets SET interaction_id = ? WHERE user_address = ?
+    `);
+    stmt.run(interactionId, userAddress);
+  }
+
+  /**
+   * Update pending bet with transaction hash
+   */
+  updatePendingBetTxHash(userAddress: string, txHash: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE pending_bets SET tx_hash = ? WHERE user_address = ?
+    `);
+    stmt.run(txHash, userAddress);
+  }
+
+  /**
+   * Get pending bet by interaction ID
+   */
+  getPendingBetByInteractionId(
+    interactionId: string
+  ): PendingBet | undefined {
+    const stmt = this.db.prepare(`
+      SELECT * FROM pending_bets WHERE interaction_id = ?
+    `);
+    return stmt.get(interactionId) as PendingBet | undefined;
   }
 
   /**
