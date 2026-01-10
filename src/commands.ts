@@ -40,9 +40,19 @@ const commands = [
     name: "mybets",
     description: "Show your active bets for today",
   },
+
+  // Claiming Winnings
   {
     name: "claim",
-    description: "Claim your winnings from a resolved match",
+    description: "Claim winnings from a specific match",
+  },
+  {
+    name: "claimable",
+    description: "List all your unclaimed winnings",
+  },
+  {
+    name: "claim_all",
+    description: "Claim all your unclaimed winnings at once",
   },
 
   // Stats
@@ -53,6 +63,12 @@ const commands = [
   {
     name: "leaderboard",
     description: "Show top bettors by profit",
+  },
+
+  // Migration (Temporary)
+  {
+    name: "migrate",
+    description: "Migrate your existing on-chain bets to database",
   },
 
   // Admin

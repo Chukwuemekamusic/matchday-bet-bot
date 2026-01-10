@@ -19,6 +19,7 @@ import {
 import { Outcome, DBMatch } from "./types";
 import { config } from "./config";
 import { startScheduler } from "./scheduler";
+import { getLinkedWallets } from "./utils/wallet";
 
 const bot = await makeTownsBot(
   process.env.APP_PRIVATE_DATA!,
@@ -359,19 +360,17 @@ Example: \`/bet 1 home 0.01\``
       return;
     }
 
-    // Check if user already bet on this match (if on-chain and contract available)
-    if (match.on_chain_match_id && contractService.isContractAvailable()) {
-      const hasBet = await contractService.hasUserBet(
-        match.on_chain_match_id,
-        userId
+    // Check if user already bet on this match (DB check)
+    const existingBet = db.getUserBetOnMatch(userId, match.id);
+    if (existingBet) {
+      await handler.sendMessage(
+        channelId,
+        `❌ You've already placed a bet on this match with wallet ${truncateAddress(
+          existingBet.wallet_address
+        )}
+        \n\nNote: You can only bet once per match. Use "/mybets" to view your active bets.`
       );
-      if (hasBet) {
-        await handler.sendMessage(
-          channelId,
-          "❌ You've already placed a bet on this match."
-        );
-        return;
-      }
+      return;
     }
 
     // Create pending bet
@@ -551,138 +550,558 @@ bot.onSlashCommand("cancel", async (handler, { channelId, userId }) => {
 
 // /mybets - Show user's bets
 bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
-  // Check if contract is available
-  if (!contractService.isContractAvailable()) {
-    await handler.sendMessage(
-      channelId,
-      `📋 **My Bets**
-
-Your bet history will be available once the smart contract is deployed.
-
-In the meantime:
-• Use \`/matches\` to browse upcoming matches
-• Use \`/bet\` to practice the betting flow
-• Use \`/stats\` to track your activity
-
-Stay tuned for the contract launch! 🚀`
-    );
-    return;
-  }
-
   console.log(`[/mybets] Fetching bets for user ${userId}`);
 
-  // Get user's smart account address (bets are recorded under smart account, not EOA)
-  let userSmartAccount: `0x${string}`;
-  try {
-    const smartAccountResult = await getSmartAccountFromUserId(bot, { userId });
-    if (!smartAccountResult) {
-      console.error(`[/mybets] Smart account not found for ${userId}`);
-      await handler.sendMessage(
-        channelId,
-        "❌ Failed to retrieve your wallet information. Please try again."
-      );
-      return;
-    }
-    userSmartAccount = smartAccountResult;
-    console.log(`[/mybets] User EOA: ${userId}`);
-    console.log(`[/mybets] User Smart Account: ${userSmartAccount}`);
-  } catch (error) {
-    console.error(
-      `[/mybets] Failed to get smart account for ${userId}:`,
-      error
-    );
+  // Get all user's bets from DB
+  const userBets = db.getUserBets(userId);
+
+  if (userBets.length === 0) {
     await handler.sendMessage(
       channelId,
-      "❌ Failed to retrieve your wallet information. Please try again."
+      "📋 **My Bets**\n\nYou don't have any active bets.\n\nUse `/matches` to browse available matches and place a bet!"
     );
     return;
   }
 
-  const matches = db.getTodaysMatches();
-  console.log(`[/mybets] Found ${matches.length} matches today`);
-
-  const bets: { match: DBMatch; bet: any }[] = [];
-
-  for (const match of matches) {
-    if (match.on_chain_match_id) {
-      try {
-        const bet = await contractService.getUserBet(
-          match.on_chain_match_id,
-          userSmartAccount // Use smart account address instead of EOA
-        );
-        console.log(
-          `[/mybets] Match ${match.on_chain_match_id} (${match.home_team} vs ${
-            match.away_team
-          }): ${bet ? `bet found (${bet.amount})` : "no bet"}`
-        );
-        if (bet && bet.amount > 0n) {
-          bets.push({ match, bet });
-        }
-      } catch (error) {
-        console.error(
-          `[/mybets] Failed to get bet for match ${match.on_chain_match_id}:`,
-          error
-        );
-        // Continue checking other matches rather than failing completely
-      }
+  // Group bets by wallet address
+  const betsByWallet = new Map<string, typeof userBets>();
+  for (const bet of userBets) {
+    if (!betsByWallet.has(bet.wallet_address)) {
+      betsByWallet.set(bet.wallet_address, []);
     }
+    betsByWallet.get(bet.wallet_address)!.push(bet);
   }
 
-  console.log(`[/mybets] Displaying ${bets.length} bets for user ${userId}`);
-
-  if (bets.length === 0) {
-    await handler.sendMessage(
-      channelId,
-      "📋 **My Bets**\n\nYou don't have any active bets on today's matches.\n\nUse `/matches` to browse available matches and place a bet!"
-    );
-    return;
-  }
+  console.log(
+    `[/mybets] Found ${userBets.length} bets across ${betsByWallet.size} wallet(s)`
+  );
 
   let message = "📋 **Your Active Bets**\n\n";
+  let totalBets = 0;
 
-  for (const { match, bet } of bets) {
-    const prediction = formatOutcome(bet.prediction);
-    const amount = formatEth(bet.amount);
-    const status =
-      match.status === "FINISHED"
-        ? bet.prediction === match.result
-          ? "🎉 WON"
-          : "❌ LOST"
-        : "⏳ Pending";
-
-    message += `**${match.home_team} vs ${match.away_team}**\n`;
-    message += `• Pick: ${prediction} | Stake: ${amount} ETH\n`;
-    message += `• Status: ${status}`;
-
-    if (
-      match.status === "FINISHED" &&
-      bet.prediction === match.result &&
-      !bet.claimed
-    ) {
-      message += " — Use `/claim` to collect!";
+  // Display bets grouped by wallet
+  for (const [walletAddress, bets] of betsByWallet) {
+    // Determine wallet label (primary vs linked)
+    let walletLabel = "🔗 Linked Wallet";
+    try {
+      const smartAccount = await getSmartAccountFromUserId(bot, {
+        userId,
+      });
+      if (
+        smartAccount &&
+        smartAccount.toLowerCase() === walletAddress.toLowerCase()
+      ) {
+        walletLabel = "🔑 Primary Wallet";
+      }
+    } catch (error) {
+      // If we can't determine, just show as a wallet
+      walletLabel = "💼 Wallet";
     }
-    message += "\n\n";
+
+    message += `**${walletLabel}** (${truncateAddress(walletAddress)}):\n\n`;
+
+    for (const bet of bets) {
+      const match = db.getMatchById(bet.match_id);
+      if (!match) continue;
+
+      const prediction = formatOutcome(bet.prediction);
+      const amount = formatEth(bet.amount);
+      const status =
+        match.status === "FINISHED"
+          ? bet.prediction === match.result
+            ? "🎉 WON"
+            : "❌ LOST"
+          : "⏳ Pending";
+
+      message += `• **${match.home_team} vs ${match.away_team}**\n`;
+      message += `  Pick: ${prediction} | Stake: ${amount} ETH | ${status}`;
+
+      if (
+        match.status === "FINISHED" &&
+        bet.prediction === match.result &&
+        !bet.claimed
+      ) {
+        message += " — Use `/claim` to collect!";
+      }
+      message += "\n\n";
+      totalBets++;
+    }
   }
+
+  message += `━━━━━━━━━━━━━━━━━\n`;
+  message += `**Total:** ${totalBets} bet${totalBets !== 1 ? "s" : ""} across ${
+    betsByWallet.size
+  } wallet${betsByWallet.size !== 1 ? "s" : ""}`;
 
   await handler.sendMessage(channelId, message);
 });
 
 // /claim - Claim winnings
-bot.onSlashCommand("claim", async (handler, { channelId }) => {
-  const message = `💰 **Claiming Winnings**
+bot.onSlashCommand("claim", async (handler, { channelId, args, userId }) => {
+  try {
+    // Check if contract is available
+    if (!contractService.isContractAvailable()) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Smart contract is not yet deployed. Please contact the admin."
+      );
+      return;
+    }
 
-To claim your winnings, you'll need to call the \`claimWinnings\` function on the contract.
+    // Validate args
+    if (args.length < 1) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Usage: \`/claim <match #>\`
 
-Contract: \`${contractService.getContractAddress()}\`
+Example: \`/claim 1\`
 
-Use your wallet to interact with the contract directly, or wait for wallet integration in a future update.`;
+Use \`/claimable\` to see all your unclaimed winnings.`
+      );
+      return;
+    }
 
-  await handler.sendMessage(channelId, message);
+    const matchNum = parseInt(args[0]);
+
+    // Validate match number
+    if (isNaN(matchNum) || matchNum < 1) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Invalid match number. Use `/claimable` to see available matches."
+      );
+      return;
+    }
+
+    // Get match by daily ID
+    const match = db.getMatchByDailyId(matchNum);
+
+    if (!match) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Match #${matchNum} not found for today. Use \`/claimable\` to see all claimable matches.`
+      );
+      return;
+    }
+
+    // Check if match is on-chain
+    if (!match.on_chain_match_id) {
+      await handler.sendMessage(
+        channelId,
+        `❌ This match hasn't been created on-chain yet. No bets have been placed.`
+      );
+      return;
+    }
+
+    // Check if match is resolved
+    if (match.result === null || match.result === undefined) {
+      await handler.sendMessage(
+        channelId,
+        `⏳ Match hasn't been resolved yet.
+
+**${match.home_team} vs ${match.away_team}**
+Status: ${match.status}
+
+You can claim once the match is finished and resolved.`
+      );
+      return;
+    }
+
+    // Get user's bet on this match
+    const userBet = db.getUserBetForMatch(userId, match.id);
+
+    if (!userBet) {
+      await handler.sendMessage(
+        channelId,
+        `❌ You didn't place a bet on this match.
+
+**${match.home_team} vs ${match.away_team}**
+
+Use \`/claimable\` to see matches you can claim from.`
+      );
+      return;
+    }
+
+    // Check if user's prediction was correct
+    if (userBet.prediction !== match.result) {
+      const userPrediction = formatOutcome(userBet.prediction);
+      const actualResult = formatOutcome(match.result);
+
+      await handler.sendMessage(
+        channelId,
+        `😔 Your bet didn't win.
+
+**${match.home_team} vs ${match.away_team}**
+Your Prediction: ${userPrediction}
+Result: ${actualResult}
+
+Better luck next time!`
+      );
+      return;
+    }
+
+    // Check if already claimed
+    if (userBet.claimed === 1) {
+      await handler.sendMessage(
+        channelId,
+        `✅ You've already claimed winnings for this match.
+
+**${match.home_team} vs ${match.away_team}**
+
+Use \`/stats\` to see your total winnings.`
+      );
+      return;
+    }
+
+    // Get on-chain bet to calculate winnings
+    const walletAddress = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+
+    if (!walletAddress) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Couldn't retrieve your wallet address. Please try again or contact support.`
+      );
+      return;
+    }
+
+    const onChainBet = await contractService.getUserBet(
+      match.on_chain_match_id,
+      walletAddress
+    );
+
+    if (!onChainBet || onChainBet.amount === 0n) {
+      await handler.sendMessage(
+        channelId,
+        `❌ Couldn't find your bet on-chain. Please contact support.
+
+Wallet: ${truncateAddress(walletAddress)}`
+      );
+      return;
+    }
+
+    // Check if already claimed on-chain
+    if (onChainBet.claimed) {
+      // Update DB to match on-chain state
+      db.updateBetClaimed(userId, match.id);
+
+      await handler.sendMessage(
+        channelId,
+        `✅ You've already claimed winnings for this match on-chain.
+
+**${match.home_team} vs ${match.away_team}**
+
+Use \`/stats\` to see your total winnings.`
+      );
+      return;
+    }
+
+    // Calculate potential winnings
+    const potentialWinnings = await contractService.calculatePotentialWinnings(
+      match.on_chain_match_id,
+      userBet.prediction,
+      BigInt(onChainBet.amount)
+    );
+
+    if (!potentialWinnings || potentialWinnings === 0n) {
+      await handler.sendMessage(
+        channelId,
+        `⚠️ Winnings calculation returned 0 ETH. This might be a pool issue. Please contact support.
+
+**${match.home_team} vs ${match.away_team}**`
+      );
+      return;
+    }
+
+    // Create interaction for claiming
+    const interactionId = `claim-${match.id}-${userId}-${Date.now()}`;
+    const profit = potentialWinnings - BigInt(onChainBet.amount);
+
+    const message = `💰 **Claim Your Winnings**
+
+**Match:** ${match.home_team} vs ${match.away_team}
+**Your Prediction:** ${formatOutcome(userBet.prediction)} ✅
+**Stake:** ${formatEth(BigInt(onChainBet.amount))} ETH
+**Payout:** ${formatEth(potentialWinnings)} ETH
+**Profit:** ${formatEth(profit)} ETH
+
+Ready to claim your winnings?`;
+
+    // Send interactive message with buttons
+    await handler.sendInteractionRequest(
+      channelId,
+      {
+        case: "form",
+        value: {
+          id: interactionId,
+          title: "Claim Winnings",
+          content: message,
+          components: [
+            {
+              id: "claim-confirm",
+              component: {
+                case: "button",
+                value: {
+                  label: "Claim Winnings",
+                  style: 1, // PRIMARY style
+                },
+              },
+            },
+            {
+              id: "claim-cancel",
+              component: {
+                case: "button",
+                value: {
+                  label: "Cancel",
+                  style: 2, // SECONDARY style
+                },
+              },
+            },
+          ],
+        },
+      } as any,
+      hexToBytes(userId as `0x${string}`)
+    );
+
+    // Store claim context in a temporary table/map
+    // For now, we'll track it by storing matchId in the interaction ID
+    // The onInteractionResponse handler will parse it
+  } catch (error) {
+    console.error("Error in /claim command:", error);
+    await handler.sendMessage(
+      channelId,
+      "❌ An error occurred while processing your claim. Please try again or contact support."
+    );
+  }
+});
+
+// /claimable - List all unclaimed winnings
+bot.onSlashCommand("claimable", async (handler, { channelId, userId }) => {
+  try {
+    // Check if contract is available
+    if (!contractService.isContractAvailable()) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Smart contract is not yet deployed. Please contact the admin."
+      );
+      return;
+    }
+
+    // Get all claimable bets for the user
+    const claimableBets = db.getClaimableBets(userId);
+
+    if (claimableBets.length === 0) {
+      await handler.sendMessage(
+        channelId,
+        `📭 **No Unclaimed Winnings**
+
+You don't have any unclaimed winnings at the moment.
+
+Use \`/matches\` to see today's matches and place new bets!`
+      );
+      return;
+    }
+
+    // Get wallet address for calculating winnings
+    const walletAddress = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+
+    if (!walletAddress) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Couldn't retrieve your wallet address. Please try again."
+      );
+      return;
+    }
+
+    let totalClaimable = 0n;
+    let message = `💰 **Your Unclaimed Winnings**\n\n`;
+
+    for (const bet of claimableBets) {
+      try {
+        // Get bet amount from contract
+        const onChainBet = await contractService.getUserBet(
+          bet.on_chain_match_id,
+          walletAddress
+        );
+
+        if (onChainBet && onChainBet.amount > 0n && !onChainBet.claimed) {
+          // Calculate potential winnings
+          const winnings = await contractService.calculatePotentialWinnings(
+            bet.on_chain_match_id,
+            bet.prediction,
+            onChainBet.amount
+          );
+
+          if (winnings && winnings > 0n) {
+            const profit = winnings - onChainBet.amount;
+            totalClaimable += winnings;
+
+            message += `**${bet.home_team} vs ${bet.away_team}**\n`;
+            message += `├ Competition: ${bet.competition}\n`;
+            message += `├ Your Pick: ${formatOutcome(bet.prediction)} ✅\n`;
+            message += `├ Stake: ${formatEth(onChainBet.amount)} ETH\n`;
+            message += `├ Payout: ${formatEth(winnings)} ETH\n`;
+            message += `└ Profit: ${formatEth(profit)} ETH\n\n`;
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Error calculating winnings for match ${bet.match_id}:`,
+          error
+        );
+        // Continue with other matches even if one fails
+      }
+    }
+
+    if (totalClaimable === 0n) {
+      await handler.sendMessage(
+        channelId,
+        `📭 **No Unclaimed Winnings**
+
+Your winning bets may have already been claimed or there was an issue calculating payouts.
+
+Use \`/stats\` to see your betting history.`
+      );
+      return;
+    }
+
+    message += `━━━━━━━━━━━━━━━━━\n`;
+    message += `**Total Claimable:** ${formatEth(totalClaimable)} ETH\n\n`;
+    message += `Use \`/claim <match #>\` to claim winnings from a specific match.\n`;
+    message += `Use \`/claim_all\` to claim all winnings at once.`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Error in /claimable command:", error);
+    await handler.sendMessage(
+      channelId,
+      "❌ An error occurred while fetching your claimable winnings. Please try again or contact support."
+    );
+  }
+});
+
+// /claim_all - Claim all unclaimed winnings (sends individual transactions for each match)
+bot.onSlashCommand("claim_all", async (handler, { channelId, userId }) => {
+  try {
+    // Check if contract is available
+    if (!contractService.isContractAvailable()) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Smart contract is not yet deployed. Please contact the admin."
+      );
+      return;
+    }
+
+    // Get all claimable bets for the user
+    const claimableBets = db.getClaimableBets(userId);
+
+    if (claimableBets.length === 0) {
+      await handler.sendMessage(
+        channelId,
+        `📭 **No Unclaimed Winnings**
+
+You don't have any unclaimed winnings at the moment.
+
+Use \`/matches\` to see today's matches and place new bets!`
+      );
+      return;
+    }
+
+    // Get wallet address
+    const walletAddress = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+
+    if (!walletAddress) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Couldn't retrieve your wallet address. Please try again."
+      );
+      return;
+    }
+
+    // Filter for actual claimable bets and collect match IDs
+    const claimableMatches: Array<{
+      matchId: number;
+      onChainMatchId: number;
+      homeTeam: string;
+      awayTeam: string;
+    }> = [];
+
+    for (const bet of claimableBets) {
+      try {
+        const onChainBet = await contractService.getUserBet(
+          bet.on_chain_match_id,
+          walletAddress
+        );
+
+        if (onChainBet && onChainBet.amount > 0n && !onChainBet.claimed) {
+          claimableMatches.push({
+            matchId: bet.match_id,
+            onChainMatchId: bet.on_chain_match_id,
+            homeTeam: bet.home_team,
+            awayTeam: bet.away_team,
+          });
+        }
+      } catch (error) {
+        console.error(
+          `Error checking claim status for match ${bet.match_id}:`,
+          error
+        );
+      }
+    }
+
+    if (claimableMatches.length === 0) {
+      await handler.sendMessage(
+        channelId,
+        `📭 **No Claimable Matches**
+
+All your winnings may have already been claimed.
+
+Use \`/stats\` to see your betting history.`
+      );
+      return;
+    }
+
+    // For now, inform user about individual claims
+    // Future enhancement: batch claims in one transaction
+    let message = `💰 **Claim All Winnings**\n\n`;
+    message += `You have **${claimableMatches.length}** match${
+      claimableMatches.length !== 1 ? "es" : ""
+    } with unclaimed winnings:\n\n`;
+
+    for (let i = 0; i < claimableMatches.length; i++) {
+      const match = claimableMatches[i];
+      message += `${i + 1}. ${match.homeTeam} vs ${match.awayTeam}\n`;
+    }
+
+    message += `\n⚠️ **Note:** You'll need to sign ${claimableMatches.length} separate transaction${
+      claimableMatches.length !== 1 ? "s" : ""
+    }.\n\n`;
+    message += `**Options:**\n`;
+    message += `• Use \`/claim <match #>\` to claim from specific matches\n`;
+    message += `• React with 👍 below to proceed with claiming all\n\n`;
+    message += `_Batch claiming in a single transaction is coming soon!_`;
+
+    await handler.sendMessage(channelId, message);
+
+    // Note: Full implementation would listen for reaction and send all transactions
+    // For now, user should use /claim individually or we can add confirmation flow
+  } catch (error) {
+    console.error("Error in /claim_all command:", error);
+    await handler.sendMessage(
+      channelId,
+      "❌ An error occurred while processing your claim request. Please try again or contact support."
+    );
+  }
 });
 
 // /stats - Show user stats
 bot.onSlashCommand("stats", async (handler, { channelId, userId }) => {
   const stats = db.getUserStats(userId);
+  const userBets = db.getUserBets(userId);
 
   if (!stats || stats.total_bets === 0) {
     await handler.sendMessage(
@@ -696,6 +1115,11 @@ Use \`/matches\` to see today's matches and start betting.`
     return;
   }
 
+  // Count unique wallets used for betting
+  const uniqueWallets = new Set(userBets.map((bet) => bet.wallet_address));
+  const walletCount = uniqueWallets.size;
+  const walletInfo = walletCount > 1 ? ` (across ${walletCount} wallets)` : "";
+
   const winRate =
     stats.total_bets > 0
       ? ((stats.total_wins / stats.total_bets) * 100).toFixed(1)
@@ -704,7 +1128,7 @@ Use \`/matches\` to see today's matches and start betting.`
   const profitNum = parseFloat(stats.profit);
   const profitEmoji = profitNum >= 0 ? "📈" : "📉";
 
-  const message = `📊 **Your Stats** — ${truncateAddress(userId)}
+  const message = `📊 **Your Stats**${walletInfo} — ${truncateAddress(userId)}
 
 🎯 **Performance:**
 • Total Bets: ${stats.total_bets}
@@ -746,6 +1170,197 @@ bot.onSlashCommand("leaderboard", async (handler, { channelId }) => {
   }
 
   await handler.sendMessage(channelId, message);
+});
+
+// /migrate - Temporary command to migrate existing on-chain bets to DB
+bot.onSlashCommand("migrate", async (handler, { channelId, userId }) => {
+  if (!contractService.isContractAvailable()) {
+    await handler.sendMessage(
+      channelId,
+      "❌ Contract not available. Cannot migrate bets."
+    );
+    return;
+  }
+
+  await handler.sendMessage(
+    channelId,
+    "🔄 Starting bet migration from blockchain to database...\n\nThis may take a moment..."
+  );
+
+  try {
+    console.log(`[/migrate] Starting migration for user ${userId}`);
+
+    // Get all user's linked wallets
+    const linkedWallets = await getLinkedWallets(bot, userId as `0x${string}`);
+    console.log(
+      `[/migrate] Found ${linkedWallets.length} linked wallet(s) for ${userId}`
+    );
+
+    if (linkedWallets.length === 0) {
+      await handler.sendMessage(
+        channelId,
+        "❌ No linked wallets found for your account."
+      );
+      return;
+    }
+
+    // Get all matches with on-chain IDs (not just today's)
+    const onChainMatches = db.getAllOnChainMatches();
+
+    console.log(
+      `[/migrate] Found ${onChainMatches.length} matches with on-chain IDs`
+    );
+
+    let migratedCount = 0;
+    let skippedCount = 0;
+    let duplicateCount = 0;
+    const duplicateMatches: string[] = [];
+
+    // Check each match for bets from any linked wallet
+    for (const match of onChainMatches) {
+      if (!match.on_chain_match_id) continue;
+
+      // Check if user already has this match in DB
+      const existingBet = db.getUserBetOnMatch(userId, match.id);
+      if (existingBet) {
+        console.log(
+          `[/migrate] Skipping match ${match.id} - already in DB for ${userId}`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // Check each wallet for a bet on this match
+      let foundBets: Array<{ wallet: string; bet: any }> = [];
+
+      for (const wallet of linkedWallets) {
+        try {
+          const bet = await contractService.getUserBet(
+            match.on_chain_match_id,
+            wallet
+          );
+
+          if (bet && bet.amount > 0n) {
+            foundBets.push({ wallet, bet });
+            console.log(
+              `[/migrate] Found bet on match ${
+                match.id
+              } from wallet ${truncateAddress(wallet)}: ${formatEth(
+                bet.amount
+              )} ETH`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[/migrate] Error checking wallet ${wallet} for match ${match.on_chain_match_id}:`,
+            error
+          );
+        }
+      }
+
+      // Handle the bets found
+      if (foundBets.length === 0) {
+        // No bets found for this match
+        continue;
+      } else if (foundBets.length === 1) {
+        // Single bet - migrate it
+        const { wallet, bet } = foundBets[0];
+        try {
+          db.createBet(
+            userId,
+            wallet,
+            match.id,
+            match.on_chain_match_id,
+            bet.prediction,
+            bet.amount.toString(),
+            "0x0" // No tx hash available for historical bets
+          );
+          migratedCount++;
+          console.log(
+            `[/migrate] ✅ Migrated bet for match ${
+              match.id
+            } from wallet ${truncateAddress(wallet)}`
+          );
+        } catch (error) {
+          console.error(
+            `[/migrate] Failed to insert bet for match ${match.id}:`,
+            error
+          );
+          skippedCount++;
+        }
+      } else {
+        // Multiple bets found (duplicate situation!)
+        duplicateCount++;
+        duplicateMatches.push(
+          `${match.home_team} vs ${match.away_team} (${foundBets.length} bets)`
+        );
+        console.warn(
+          `[/migrate] ⚠️ Found ${foundBets.length} bets for match ${match.id} - keeping largest`
+        );
+
+        // Keep the bet with the largest amount
+        const largestBet = foundBets.reduce((prev, current) =>
+          current.bet.amount > prev.bet.amount ? current : prev
+        );
+
+        try {
+          db.createBet(
+            userId,
+            largestBet.wallet,
+            match.id,
+            match.on_chain_match_id,
+            largestBet.bet.prediction,
+            largestBet.bet.amount.toString(),
+            "0x0"
+          );
+          migratedCount++;
+          console.log(
+            `[/migrate] ✅ Migrated largest bet (${formatEth(
+              largestBet.bet.amount
+            )} ETH) from ${truncateAddress(largestBet.wallet)}`
+          );
+        } catch (error) {
+          console.error(
+            `[/migrate] Failed to insert largest bet for match ${match.id}:`,
+            error
+          );
+          skippedCount++;
+        }
+      }
+    }
+
+    // Build result message
+    let resultMessage = `✅ **Migration Complete!**\n\n`;
+    resultMessage += `📊 **Summary:**\n`;
+    resultMessage += `• Migrated: ${migratedCount} bet${
+      migratedCount !== 1 ? "s" : ""
+    }\n`;
+    resultMessage += `• Skipped (already in DB): ${skippedCount}\n`;
+
+    if (duplicateCount > 0) {
+      resultMessage += `• ⚠️ Duplicates found: ${duplicateCount}\n\n`;
+      resultMessage += `**Note:** You had multiple bets on the same match from different wallets. I kept the largest bet for each match:\n`;
+      for (const match of duplicateMatches) {
+        resultMessage += `• ${match}\n`;
+      }
+      resultMessage += `\nGoing forward, you can only place one bet per match (with any wallet).`;
+    }
+
+    resultMessage += `\n\nUse \`/mybets\` to view your migrated bets!`;
+
+    await handler.sendMessage(channelId, resultMessage);
+    console.log(
+      `[/migrate] Migration completed for ${userId}: ${migratedCount} migrated, ${skippedCount} skipped, ${duplicateCount} duplicates handled`
+    );
+  } catch (error) {
+    console.error(`[/migrate] Migration failed for ${userId}:`, error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **Migration Failed**\n\nAn error occurred during migration. Please try again or contact support.\n\nError: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
 });
 
 // /fetch - Admin command to manually fetch matches
@@ -1012,6 +1627,100 @@ bot.onInteractionResponse(async (handler, event) => {
           );
           return;
         }
+
+        // Handle claim confirm button
+        if (component.id === "claim-confirm") {
+          // Parse match ID from interaction ID (format: claim-{matchId}-{userId}-{timestamp})
+          const parts = requestId.split("-");
+          if (parts.length < 2 || parts[0] !== "claim") {
+            await handler.sendMessage(
+              channelId,
+              "❌ Invalid claim request. Please try again with `/claim`."
+            );
+            return;
+          }
+
+          const matchId = parseInt(parts[1]);
+          const match = db.getMatchById(matchId);
+
+          if (!match) {
+            await handler.sendMessage(
+              channelId,
+              "❌ Match no longer available."
+            );
+            return;
+          }
+
+          if (!match.on_chain_match_id) {
+            await handler.sendMessage(
+              channelId,
+              "❌ Match not found on-chain."
+            );
+            return;
+          }
+
+          // Get user's bet
+          const userBet = db.getUserBetForMatch(userId, matchId);
+
+          if (!userBet) {
+            await handler.sendMessage(
+              channelId,
+              "❌ You don't have a bet on this match."
+            );
+            return;
+          }
+
+          // Double-check not already claimed
+          if (userBet.claimed === 1) {
+            await handler.sendMessage(
+              channelId,
+              "✅ You've already claimed winnings for this match."
+            );
+            return;
+          }
+
+          // Generate transaction for user to sign
+          const calldata = contractService.encodeClaimWinnings(
+            match.on_chain_match_id
+          );
+
+          const txId = `claim-tx-${match.on_chain_match_id}-${userId}-${Date.now()}`;
+
+          // Send transaction request to user
+          await handler.sendInteractionRequest(
+            channelId,
+            {
+              case: "transaction",
+              value: {
+                id: txId,
+                title: `Claim Winnings: ${match.home_team} vs ${match.away_team}`,
+                content: {
+                  case: "evm",
+                  value: {
+                    chainId: "8453", // Base mainnet
+                    to: contractService.getContractAddress(),
+                    value: "0", // No ETH sent for claims
+                    data: calldata,
+                  },
+                },
+              },
+            } as any,
+            hexToBytes(userId as `0x${string}`)
+          );
+
+          await handler.sendMessage(
+            channelId,
+            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your winnings.\n\n_I'll confirm once the transaction is mined._"
+          );
+
+          return;
+        }
+
+        // Handle claim cancel button
+        if (component.id === "claim-cancel") {
+          await handler.sendMessage(channelId, "✅ Claim cancelled.");
+          return;
+        }
       }
     }
   }
@@ -1043,37 +1752,207 @@ Waiting for confirmation on Base...
         });
 
         if (receipt.status === "success") {
-          // Get match info from the pending bet (if still available)
-          const pendingBet = db.getPendingBet(userId);
-          let matchInfo = "";
+          // Check if this is a claim transaction (ID format: claim-tx-{onChainMatchId}-{userId}-{timestamp})
+          const txId = txResponse.requestId || "";
+          const isClaimTx = txId.startsWith("claim-tx-");
 
-          if (pendingBet) {
-            const match = db.getMatchById(pendingBet.match_id);
-            if (match) {
-              const predictionDisplay = formatOutcome(pendingBet.prediction);
-              matchInfo = `\n\n**Match:** ${match.home_team} vs ${match.away_team}\n**Your Prediction:** ${predictionDisplay}\n**Stake:** ${pendingBet.amount} ETH`;
+          if (isClaimTx) {
+            // Handle claim transaction
+            const parts = txId.split("-");
+            if (parts.length >= 3) {
+              const onChainMatchId = parseInt(parts[2]);
 
-              // Record the bet in user stats
-              db.recordBet(userId, pendingBet.amount);
+              // Find the match by on-chain ID
+              const match = db.getMatchByOnChainId(onChainMatchId);
 
-              // Clear the pending bet now that it's confirmed
-              db.clearPendingBet(userId);
+              if (match) {
+                // Get user's bet to calculate winnings
+                const userBet = db.getUserBetForMatch(userId, match.id);
+
+                if (userBet) {
+                  // Get wallet address to check actual payout
+                  const walletAddress = await getSmartAccountFromUserId(bot, {
+                    userId: userId as `0x${string}`,
+                  });
+
+                  if (walletAddress) {
+                    try {
+                      // Calculate winnings (bet amount is stored as string in DB)
+                      const betAmount = parseEth(userBet.amount);
+                      const winnings =
+                        await contractService.calculatePotentialWinnings(
+                          onChainMatchId,
+                          userBet.prediction,
+                          betAmount
+                        );
+
+                      const profit =
+                        winnings && winnings > betAmount
+                          ? winnings - betAmount
+                          : 0n;
+
+                      // Update database
+                      db.updateBetClaimed(userId, match.id);
+
+                      // Record win in user stats
+                      if (winnings) {
+                        db.recordWin(
+                          userId,
+                          formatEth(winnings),
+                          formatEth(profit)
+                        );
+                      }
+
+                      // Send success message
+                      await handler.sendMessage(
+                        channelId,
+                        `💰 **Winnings Claimed!**
+
+<@${userId}> your winnings have been claimed successfully!
+
+**Match:** ${match.home_team} vs ${match.away_team}
+**Payout:** ${winnings ? formatEth(winnings) : "Unknown"} ETH
+**Profit:** ${formatEth(profit)} ETH
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                        {
+                          mentions: [{ userId, displayName: userId.slice(0, 8) }],
+                        }
+                      );
+
+                      console.log(
+                        `✅ Claim confirmed for ${userId}: ${txHash}, profit: ${formatEth(
+                          profit
+                        )} ETH`
+                      );
+                    } catch (error) {
+                      console.error("Error processing claim confirmation:", error);
+                      await handler.sendMessage(
+                        channelId,
+                        `✅ **Claim Transaction Confirmed!**
+
+Your winnings have been claimed. Check your wallet to see the payout.
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`
+                      );
+                    }
+                  } else {
+                    // Fallback if wallet address not found
+                    db.updateBetClaimed(userId, match.id);
+
+                    await handler.sendMessage(
+                      channelId,
+                      `✅ **Claim Confirmed!**
+
+Your claim transaction was successful!
+
+**Match:** ${match.home_team} vs ${match.away_team}
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`
+                    );
+                  }
+                } else {
+                  // No bet found in DB, but transaction succeeded
+                  await handler.sendMessage(
+                    channelId,
+                    `✅ **Claim Transaction Confirmed!**
+
+Your winnings have been claimed successfully!
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`
+                  );
+                }
+              } else {
+                // Match not found, but transaction succeeded
+                await handler.sendMessage(
+                  channelId,
+                  `✅ **Claim Transaction Confirmed!**
+
+Your claim was successful! Check your wallet.
+
+🔗 [Transaction](https://basescan.org/tx/${txHash})`
+                );
+              }
             }
-          }
+          } else {
+            // Handle bet transaction (existing logic)
+            const pendingBet = db.getPendingBet(userId);
+            let matchInfo = "";
 
-          await handler.sendMessage(
-            channelId,
-            `🎯 **Bet Confirmed!**
+            if (pendingBet) {
+              const match = db.getMatchById(pendingBet.match_id);
+              if (match) {
+                const predictionDisplay = formatOutcome(pendingBet.prediction);
+                matchInfo = `\n\n**Match:** ${match.home_team} vs ${match.away_team}\n**Your Prediction:** ${predictionDisplay}\n**Stake:** ${pendingBet.amount} ETH`;
+
+                // Record the bet in user stats
+                db.recordBet(userId, pendingBet.amount);
+
+                // Record the bet in bets table
+                // Determine which wallet placed the bet by checking on-chain
+                if (
+                  match.on_chain_match_id &&
+                  contractService.isContractAvailable()
+                ) {
+                  try {
+                    const linkedWallets = await getLinkedWallets(
+                      bot,
+                      userId as `0x${string}`
+                    );
+                    let bettorWallet: string | null = null;
+
+                    for (const wallet of linkedWallets) {
+                      const onChainBet = await contractService.getUserBet(
+                        match.on_chain_match_id,
+                        wallet
+                      );
+                      if (onChainBet && onChainBet.amount > 0n) {
+                        bettorWallet = wallet;
+                        break;
+                      }
+                    }
+
+                    if (bettorWallet) {
+                      // Record bet in database
+                      db.createBet(
+                        userId,
+                        bettorWallet,
+                        pendingBet.match_id,
+                        match.on_chain_match_id,
+                        pendingBet.prediction,
+                        pendingBet.amount,
+                        txHash
+                      );
+                      console.log(
+                        `💾 Bet recorded in DB: ${userId} -> ${truncateAddress(
+                          bettorWallet
+                        )}`
+                      );
+                    }
+                  } catch (error) {
+                    console.error("Failed to record bet in DB:", error);
+                  }
+                }
+
+                // Clear the pending bet now that it's confirmed
+                db.clearPendingBet(userId);
+              }
+            }
+
+            await handler.sendMessage(
+              channelId,
+              `🎯 **Bet Confirmed!**
 
 <@${userId}> your bet has been placed successfully!${matchInfo}
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
-            {
-              mentions: [{ userId, displayName: userId.slice(0, 8) }],
-            }
-          );
+              {
+                mentions: [{ userId, displayName: userId.slice(0, 8) }],
+              }
+            );
 
-          console.log(`✅ Bet confirmed for ${userId}: ${txHash}`);
+            console.log(`✅ Bet confirmed for ${userId}: ${txHash}`);
+          }
         } else {
           await handler.sendMessage(
             channelId,

@@ -93,6 +93,28 @@ class DatabaseService {
       );
     `);
 
+    // Create bets table (confirmed bets)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        match_id INTEGER NOT NULL,
+        on_chain_match_id INTEGER NOT NULL,
+        prediction INTEGER NOT NULL,
+        amount TEXT NOT NULL,
+        tx_hash TEXT,
+        placed_at INTEGER NOT NULL,
+        claimed INTEGER DEFAULT 0,
+        UNIQUE(user_id, match_id),
+        FOREIGN KEY (match_id) REFERENCES matches(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_bets_user ON bets(user_id);
+      CREATE INDEX IF NOT EXISTS idx_bets_match ON bets(match_id);
+      CREATE INDEX IF NOT EXISTS idx_bets_wallet ON bets(wallet_address);
+    `);
+
     // Migrate existing databases: Add daily_id column if it doesn't exist
     try {
       this.db.exec(`ALTER TABLE matches ADD COLUMN daily_id INTEGER`);
@@ -293,12 +315,24 @@ class DatabaseService {
   getMatchesToClose(): DBMatch[] {
     const now = Math.floor(Date.now() / 1000);
     const stmt = this.db.prepare(`
-      SELECT * FROM matches 
+      SELECT * FROM matches
       WHERE on_chain_match_id IS NOT NULL
         AND status = 'SCHEDULED'
         AND kickoff_time <= ?
     `);
     return stmt.all(now) as DBMatch[];
+  }
+
+  /**
+   * Get all matches with on-chain IDs (for migration)
+   */
+  getAllOnChainMatches(): DBMatch[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+      ORDER BY kickoff_time DESC
+    `);
+    return stmt.all() as DBMatch[];
   }
 
   /**
@@ -589,6 +623,240 @@ class DatabaseService {
       VALUES (?, ?, ?)
     `);
     stmt.run(matchDate, competitionCode, messageId || null);
+  }
+
+  // ==================== BETS ====================
+
+  /**
+   * Check if user has already bet on a match
+   */
+  getUserBetOnMatch(
+    userId: string,
+    matchId: number
+  ): { wallet_address: string } | undefined {
+    const stmt = this.db.prepare(`
+      SELECT wallet_address FROM bets WHERE user_id = ? AND match_id = ?
+    `);
+    return stmt.get(userId, matchId) as
+      | { wallet_address: string }
+      | undefined;
+  }
+
+  /**
+   * Create a bet record
+   */
+  createBet(
+    userId: string,
+    walletAddress: string,
+    matchId: number,
+    onChainMatchId: number,
+    prediction: Outcome,
+    amount: string,
+    txHash: string
+  ): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO bets (
+        user_id, wallet_address, match_id, on_chain_match_id,
+        prediction, amount, tx_hash, placed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+      RETURNING id
+    `);
+    const result = stmt.get(
+      userId,
+      walletAddress,
+      matchId,
+      onChainMatchId,
+      prediction,
+      amount,
+      txHash
+    ) as { id: number };
+    return result.id;
+  }
+
+  /**
+   * Get all bets for a user
+   */
+  getUserBets(userId: string): Array<{
+    id: number;
+    user_id: string;
+    wallet_address: string;
+    match_id: number;
+    on_chain_match_id: number;
+    prediction: number;
+    amount: string;
+    tx_hash: string | null;
+    placed_at: number;
+    claimed: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT * FROM bets WHERE user_id = ? ORDER BY placed_at DESC
+    `);
+    return stmt.all(userId) as Array<{
+      id: number;
+      user_id: string;
+      wallet_address: string;
+      match_id: number;
+      on_chain_match_id: number;
+      prediction: number;
+      amount: string;
+      tx_hash: string | null;
+      placed_at: number;
+      claimed: number;
+    }>;
+  }
+
+  /**
+   * Update bet claimed status
+   */
+  updateBetClaimed(userId: string, matchId: number): void {
+    const stmt = this.db.prepare(`
+      UPDATE bets SET claimed = 1 WHERE user_id = ? AND match_id = ?
+    `);
+    stmt.run(userId, matchId);
+  }
+
+  /**
+   * Get all bets for a match
+   */
+  getBetsForMatch(matchId: number): Array<{
+    id: number;
+    user_id: string;
+    wallet_address: string;
+    match_id: number;
+    on_chain_match_id: number;
+    prediction: number;
+    amount: string;
+    tx_hash: string | null;
+    placed_at: number;
+    claimed: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT * FROM bets WHERE match_id = ? ORDER BY placed_at ASC
+    `);
+    return stmt.all(matchId) as Array<{
+      id: number;
+      user_id: string;
+      wallet_address: string;
+      match_id: number;
+      on_chain_match_id: number;
+      prediction: number;
+      amount: string;
+      tx_hash: string | null;
+      placed_at: number;
+      claimed: number;
+    }>;
+  }
+
+  /**
+   * Get a user's full bet details for a specific match
+   */
+  getUserBetForMatch(
+    userId: string,
+    matchId: number
+  ): {
+    id: number;
+    user_id: string;
+    wallet_address: string;
+    match_id: number;
+    on_chain_match_id: number;
+    prediction: number;
+    amount: string;
+    tx_hash: string | null;
+    placed_at: number;
+    claimed: number;
+  } | undefined {
+    const stmt = this.db.prepare(`
+      SELECT * FROM bets WHERE user_id = ? AND match_id = ?
+    `);
+    return stmt.get(userId, matchId) as
+      | {
+          id: number;
+          user_id: string;
+          wallet_address: string;
+          match_id: number;
+          on_chain_match_id: number;
+          prediction: number;
+          amount: string;
+          tx_hash: string | null;
+          placed_at: number;
+          claimed: number;
+        }
+      | undefined;
+  }
+
+  /**
+   * Get all claimable bets for a user (won bets that haven't been claimed)
+   * Joins with matches table to check resolution status
+   */
+  getClaimableBets(userId: string): Array<{
+    bet_id: number;
+    user_id: string;
+    wallet_address: string;
+    match_id: number;
+    on_chain_match_id: number;
+    prediction: number;
+    amount: string;
+    tx_hash: string | null;
+    placed_at: number;
+    claimed: number;
+    home_team: string;
+    away_team: string;
+    competition: string;
+    competition_code: string;
+    kickoff_time: number;
+    home_score: number | null;
+    away_score: number | null;
+    result: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT
+        b.id as bet_id,
+        b.user_id,
+        b.wallet_address,
+        b.match_id,
+        b.on_chain_match_id,
+        b.prediction,
+        b.amount,
+        b.tx_hash,
+        b.placed_at,
+        b.claimed,
+        m.home_team,
+        m.away_team,
+        m.competition,
+        m.competition_code,
+        m.kickoff_time,
+        m.home_score,
+        m.away_score,
+        m.result
+      FROM bets b
+      INNER JOIN matches m ON b.match_id = m.id
+      WHERE b.user_id = ?
+        AND b.claimed = 0
+        AND m.result IS NOT NULL
+        AND b.prediction = m.result
+      ORDER BY m.kickoff_time DESC
+    `);
+    return stmt.all(userId) as Array<{
+      bet_id: number;
+      user_id: string;
+      wallet_address: string;
+      match_id: number;
+      on_chain_match_id: number;
+      prediction: number;
+      amount: string;
+      tx_hash: string | null;
+      placed_at: number;
+      claimed: number;
+      home_team: string;
+      away_team: string;
+      competition: string;
+      competition_code: string;
+      kickoff_time: number;
+      home_score: number | null;
+      away_score: number | null;
+      result: number;
+    }>;
   }
 
   /**

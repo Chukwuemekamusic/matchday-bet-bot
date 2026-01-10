@@ -1034,6 +1034,20 @@ class ContractService {
   }
 
   /**
+   * Generate multiple claimWinnings calldata for batch claiming
+   * Returns array of calldata hex strings
+   */
+  encodeBatchClaimWinnings(matchIds: number[]): `0x${string}`[] {
+    return matchIds.map((matchId) =>
+      encodeFunctionData({
+        abi: CONTRACT_ABI,
+        functionName: "claimWinnings",
+        args: [BigInt(matchId)],
+      })
+    );
+  }
+
+  /**
    * Generate calldata for claimRefund (for user to sign)
    */
   encodeClaimRefund(matchId: number): `0x${string}` {
