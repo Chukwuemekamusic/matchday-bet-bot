@@ -52,7 +52,7 @@ export const config = {
 
   // Betting limits (in ETH)
   betting: {
-    minStake: optionalEnv("MIN_STAKE", "0.001"),
+    minStake: optionalEnv("MIN_STAKE", "0.0001"),
     maxStake: optionalEnv("MAX_STAKE", "0.1"),
     pendingBetTimeout: 5 * 60 * 1000, // 5 minutes in ms
   },

@@ -1,4 +1,4 @@
-import { makeTownsBot } from "@towns-protocol/bot";
+import { makeTownsBot, getSmartAccountFromUserId } from "@towns-protocol/bot";
 import { hexToBytes } from "viem";
 import commands from "./commands";
 import { db } from "./db";
@@ -27,6 +27,12 @@ const bot = await makeTownsBot(
     commands,
   }
 );
+
+// Log SDK version info for debugging
+console.log("📦 SDK Information:");
+console.log("  - @towns-protocol/bot: 0.0.453");
+console.log("  - viem:", "2.29.3");
+console.log("  - Bot initialized successfully");
 
 // Initialize contract service with bot instance
 const contractService = new ContractService(bot);
@@ -204,14 +210,14 @@ ${match.competition} | ${status}
     match.kickoff_time
   )})
 
-📊 **Current Odds:**
+📊 **Current Odds:** \n\n
 • Home (${match.home_team}): ${formatOdds(odds.home)} — Pool: ${formatEth(
     pools.home
-  )} ETH
-• Draw: ${formatOdds(odds.draw)} — Pool: ${formatEth(pools.draw)} ETH
+  )} ETH \n\n
+• Draw: ${formatOdds(odds.draw)} — Pool: ${formatEth(pools.draw)} ETH \n\n
 • Away (${match.away_team}): ${formatOdds(odds.away)} — Pool: ${formatEth(
     pools.away
-  )} ETH
+  )} ETH \n\n
 
 💰 **Total Pool:** ${formatEth(pools.total)} ETH
 
@@ -227,7 +233,28 @@ ${
 // /bet - Place a bet (step 1: create pending bet)
 bot.onSlashCommand("bet", async (handler, { channelId, args, userId }) => {
   try {
-    console.log("🎯 /bet command received:", { userId, args, channelId });
+    console.log("═══════════════════════════════════════════════════════");
+    console.log("🎯 /BET COMMAND HANDLER INVOKED");
+    console.log("═══════════════════════════════════════════════════════");
+    console.log("  📅 Timestamp:", new Date().toISOString());
+    console.log("  👤 userId:", userId);
+    console.log("  📝 args:", args);
+    console.log("  📍 channelId:", channelId);
+
+    // Check if user already has a pending bet
+    const existingPending = db.getPendingBet(userId);
+    console.log(
+      "  💾 Existing pending bet:",
+      existingPending
+        ? `YES - match ${existingPending.match_id}, ${
+            existingPending.amount
+          } ETH, expires ${new Date(
+            existingPending.expires_at * 1000
+          ).toISOString()}`
+        : "NO"
+    );
+
+    console.log("═══════════════════════════════════════════════════════");
 
     if (args.length < 3) {
       console.log("❌ Invalid args length:", args.length);
@@ -542,30 +569,76 @@ Stay tuned for the contract launch! 🚀`
     return;
   }
 
-  const matches = db.getTodaysMatches();
-  const bets: { match: DBMatch; bet: any }[] = [];
+  console.log(`[/mybets] Fetching bets for user ${userId}`);
 
-  for (const match of matches) {
-    if (match.on_chain_match_id) {
-      const bet = await contractService.getUserBet(
-        match.on_chain_match_id,
-        userId
+  // Get user's smart account address (bets are recorded under smart account, not EOA)
+  let userSmartAccount: `0x${string}`;
+  try {
+    const smartAccountResult = await getSmartAccountFromUserId(bot, { userId });
+    if (!smartAccountResult) {
+      console.error(`[/mybets] Smart account not found for ${userId}`);
+      await handler.sendMessage(
+        channelId,
+        "❌ Failed to retrieve your wallet information. Please try again."
       );
-      if (bet && bet.amount > 0n) {
-        bets.push({ match, bet });
-      }
+      return;
     }
-  }
-
-  if (bets.length === 0) {
+    userSmartAccount = smartAccountResult;
+    console.log(`[/mybets] User EOA: ${userId}`);
+    console.log(`[/mybets] User Smart Account: ${userSmartAccount}`);
+  } catch (error) {
+    console.error(
+      `[/mybets] Failed to get smart account for ${userId}:`,
+      error
+    );
     await handler.sendMessage(
       channelId,
-      "📋 You haven't placed any bets today.\n\nUse `/matches` to see available matches!"
+      "❌ Failed to retrieve your wallet information. Please try again."
     );
     return;
   }
 
-  let message = "📋 **Your Bets Today**\n\n";
+  const matches = db.getTodaysMatches();
+  console.log(`[/mybets] Found ${matches.length} matches today`);
+
+  const bets: { match: DBMatch; bet: any }[] = [];
+
+  for (const match of matches) {
+    if (match.on_chain_match_id) {
+      try {
+        const bet = await contractService.getUserBet(
+          match.on_chain_match_id,
+          userSmartAccount // Use smart account address instead of EOA
+        );
+        console.log(
+          `[/mybets] Match ${match.on_chain_match_id} (${match.home_team} vs ${
+            match.away_team
+          }): ${bet ? `bet found (${bet.amount})` : "no bet"}`
+        );
+        if (bet && bet.amount > 0n) {
+          bets.push({ match, bet });
+        }
+      } catch (error) {
+        console.error(
+          `[/mybets] Failed to get bet for match ${match.on_chain_match_id}:`,
+          error
+        );
+        // Continue checking other matches rather than failing completely
+      }
+    }
+  }
+
+  console.log(`[/mybets] Displaying ${bets.length} bets for user ${userId}`);
+
+  if (bets.length === 0) {
+    await handler.sendMessage(
+      channelId,
+      "📋 **My Bets**\n\nYou don't have any active bets on today's matches.\n\nUse `/matches` to browse available matches and place a bet!"
+    );
+    return;
+  }
+
+  let message = "📋 **Your Active Bets**\n\n";
 
   for (const { match, bet } of bets) {
     const prediction = formatOutcome(bet.prediction);
@@ -909,8 +982,34 @@ bot.onInteractionResponse(async (handler, event) => {
 
         // Handle cancel button
         if (component.id === "cancel") {
+          console.log("🚫 CANCEL BUTTON CLICKED");
+          console.log("  - userId:", userId);
+          console.log("  - channelId:", channelId);
+          console.log("  - requestId:", requestId);
+
+          // Get pending bet BEFORE clearing (for logging)
+          const pendingBetToCancel = db.getPendingBet(userId);
+          console.log(
+            "  - Pending bet before clear:",
+            pendingBetToCancel
+              ? `match ${pendingBetToCancel.match_id}, ${pendingBetToCancel.amount} ETH`
+              : "NONE FOUND"
+          );
+
           db.clearPendingBet(userId);
+
+          // Verify it's actually cleared
+          const checkCleared = db.getPendingBet(userId);
+          console.log(
+            "  - Pending bet after clear:",
+            checkCleared ? "❌ STILL EXISTS!" : "✅ Successfully cleared"
+          );
+
           await handler.sendMessage(channelId, "✅ Bet cancelled.");
+
+          console.log(
+            "  - Cancel complete, user should be able to place new bet"
+          );
           return;
         }
       }
@@ -1366,12 +1465,105 @@ Check:
 // /userHasBet - Test if user has bet on a match
 bot.onSlashCommand("userHasBet", async (handler, { channelId, args }) => {
   try {
-    const matchId = parseInt(args[0]);
-    const userAddress = args[1];
-    const hasBet = await contractService.hasUserBet(matchId, userAddress);
+    // Validate arguments
+    if (!args || args.length < 2) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Missing Arguments**
+
+**Usage:** \`/userHasBet <match#> <userAddress>\`
+
+**Example:** \`/userHasBet 1 0x742d35Cc6634C0532925a3b844Bc3e7d02d20b02\`
+
+**Parameters:**
+• \`match#\` - The daily match number from \`/matches\` (e.g., 1, 2, 3)
+• \`userAddress\` - The user's Ethereum address (0x...)`
+      );
+      return;
+    }
+
+    const matchNumStr = args[0].trim();
+    const userAddress = args[1].trim();
+
+    // Validate match number
+    if (!/^\d+$/.test(matchNumStr)) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Invalid Match Number**
+"\`${matchNumStr}\`" is not a valid number.`
+      );
+      return;
+    }
+
+    const matchNum = parseInt(matchNumStr);
+
+    // Validate user address format
+    if (!/^0x[a-fA-F0-9]{40}$/.test(userAddress)) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Invalid User Address**
+"\`${userAddress}\`" is not a valid Ethereum address.
+Expected format: \`0x...\` (42 characters)`
+      );
+      return;
+    }
+
+    // Get match by daily ID
+    const match = db.getMatchByDailyId(matchNum);
+    if (!match) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Match Not Found**
+Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
+      );
+      return;
+    }
+
+    // Check if match is on-chain
+    if (!match.on_chain_match_id) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Match Not On-Chain**
+Match #${matchNum} (${match.home_team} vs ${match.away_team}) hasn't been created on-chain yet.
+No bets can exist for this match.`
+      );
+      return;
+    }
+
+    // Try to get smart account address (in case they provided EOA)
+    let addressToCheck = userAddress as `0x${string}`;
+    try {
+      const smartAccount = await getSmartAccountFromUserId(bot, {
+        userId: userAddress as `0x${string}`,
+      });
+      if (smartAccount) {
+        addressToCheck = smartAccount;
+        console.log(
+          `[/userHasBet] Converted EOA ${userAddress} to smart account ${addressToCheck}`
+        );
+      }
+    } catch (error) {
+      // If it fails, assume they provided the smart account directly
+      console.log(`[/userHasBet] Using address as provided: ${userAddress}`);
+    }
+
+    const hasBet = await contractService.hasUserBet(
+      match.on_chain_match_id,
+      addressToCheck
+    );
     await handler.sendMessage(
       channelId,
-      `User ${userAddress} has ${hasBet ? "" : "not"} bet on match ${matchId}`
+      `🔍 **Bet Check Result**
+
+**Match #${matchNum}:** ${match.home_team} vs ${match.away_team}
+**On-Chain Match ID:** ${match.on_chain_match_id}
+**User Address:** \`${truncateAddress(userAddress)}\`
+${
+  addressToCheck !== userAddress
+    ? `**Smart Account:** \`${truncateAddress(addressToCheck)}\`\n`
+    : ""
+}
+**Has Bet:** ${hasBet ? "✅ YES" : "❌ NO"}`
     );
   } catch (error) {
     console.error("User has bet error:", error);
@@ -1388,6 +1580,27 @@ bot.onSlashCommand("userHasBet", async (handler, { channelId, args }) => {
     //////////////////////////////////////////////////////////////*/
 
 const app = bot.start();
+
+// Add webhook debugging middleware (logs ALL incoming webhooks before SDK processes them)
+app.use("/webhook", async (c, next) => {
+  const clonedReq = c.req.raw.clone();
+  try {
+    const body = await clonedReq.json();
+    console.log("🔔 WEBHOOK RECEIVED:", {
+      method: c.req.method,
+      path: c.req.path,
+      timestamp: new Date().toISOString(),
+      body: JSON.stringify(body, null, 2),
+    });
+  } catch (e) {
+    console.log("🔔 WEBHOOK RECEIVED (non-JSON):", {
+      method: c.req.method,
+      path: c.req.path,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return next();
+});
 
 // Add discovery endpoint for bot directories
 app.get("/.well-known/agent-metadata.json", async (c) => {
