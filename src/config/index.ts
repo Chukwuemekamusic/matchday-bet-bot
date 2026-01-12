@@ -59,6 +59,14 @@ export const config = {
 
   // Optional channel for announcements
   // defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
+
+  // Admin permissions
+  admin: {
+    userId: optionalEnv(
+      "ADMIN_USER_ID",
+      "0xb17B2CF146890336E383B891DC3D2F636B20a294"
+    ), // Admin's Ethereum address (0x...)
+  },
 };
 
 export default config;

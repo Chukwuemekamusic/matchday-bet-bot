@@ -1059,6 +1059,92 @@ class ContractService {
   }
 
   /**
+   * Check if a user is eligible for a refund
+   * Returns true if:
+   * 1. Match is CANCELLED, OR
+   * 2. Match is RESOLVED and everyone bet on the same outcome (winnerPool == totalPool), OR
+   * 3. Match is RESOLVED and no one bet on the winning outcome (winnerPool == 0)
+   */
+  async isRefundEligible(
+    matchId: number,
+    userAddress: Address
+  ): Promise<{ eligible: boolean; reason?: string }> {
+    if (!this.isContractAvailable()) {
+      return { eligible: false, reason: "Contract not available" };
+    }
+
+    try {
+      // Get match data
+      const match = await this.getMatch(matchId);
+      if (!match) {
+        return { eligible: false, reason: "Match not found" };
+      }
+
+      // Get user's bet
+      const userBet = await this.getUserBet(matchId, userAddress);
+      if (!userBet || userBet.amount === 0n) {
+        return { eligible: false, reason: "No bet found" };
+      }
+
+      // Check if already claimed
+      if (userBet.claimed) {
+        return { eligible: false, reason: "Already claimed" };
+      }
+
+      // Case 1: Match is CANCELLED (status = 3)
+      if (match.status === 3) {
+        return { eligible: true, reason: "Match cancelled" };
+      }
+
+      // Case 2 & 3: Match is RESOLVED (status = 2)
+      if (match.status === 2) {
+        // Get the winner pool based on the result
+        let winnerPool = 0n;
+        if (match.result === 1) {
+          // HOME
+          winnerPool = match.homePool;
+        } else if (match.result === 2) {
+          // DRAW
+          winnerPool = match.drawPool;
+        } else if (match.result === 3) {
+          // AWAY
+          winnerPool = match.awayPool;
+        }
+
+        // Case 2: Everyone bet on the same outcome
+        if (winnerPool === match.totalPool && winnerPool > 0n) {
+          // User gets refund via claimWinnings (returns original stake)
+          // But they should use /claim, not /claim-refund
+          return {
+            eligible: false,
+            reason: "Use /claim to get your stake back (everyone bet the same)",
+          };
+        }
+
+        // Case 3: No one bet on the winning outcome
+        if (winnerPool === 0n) {
+          return {
+            eligible: true,
+            reason: "No winners - everyone gets refund",
+          };
+        }
+
+        // User is a loser in a normal resolved match
+        return { eligible: false, reason: "Match resolved - you lost" };
+      }
+
+      // Match is not resolved or cancelled yet
+      return {
+        eligible: false,
+        reason: "Match not resolved or cancelled yet",
+      };
+    } catch (error) {
+      console.error("Error checking refund eligibility:", error);
+      return { eligible: false, reason: "Error checking eligibility" };
+    }
+  }
+
+  /**
    * Get contract address
    */
   getContractAddress(): string {

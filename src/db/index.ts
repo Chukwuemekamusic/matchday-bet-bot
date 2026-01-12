@@ -29,6 +29,7 @@ class DatabaseService {
         api_match_id INTEGER UNIQUE NOT NULL,
         on_chain_match_id INTEGER,
         daily_id INTEGER,
+        match_code TEXT UNIQUE,
         home_team TEXT NOT NULL,
         away_team TEXT NOT NULL,
         competition TEXT NOT NULL,
@@ -133,15 +134,41 @@ class DatabaseService {
     }
 
     try {
-      this.db.exec(
-        `ALTER TABLE pending_bets ADD COLUMN interaction_id TEXT`
-      );
+      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN interaction_id TEXT`);
       console.log(
         "✅ Migration: Added interaction_id column to pending_bets table"
       );
     } catch (error) {
       // Column already exists
     }
+
+    // Migrate existing databases: Add match_code column if it doesn't exist
+    // This is for backward compatibility with databases created before match_code was added
+    // Note: We can't add UNIQUE constraint via ALTER TABLE on existing tables with data
+    // The uniqueness will be enforced by the index created below
+    try {
+      this.db.exec(`ALTER TABLE matches ADD COLUMN match_code TEXT`);
+      console.log("✅ Migration: Added match_code column to matches table");
+    } catch (error) {
+      // Column already exists (expected for fresh databases or already migrated)
+      // This is safe to ignore
+    }
+
+    // Create unique index for match_code (safe to run multiple times with IF NOT EXISTS)
+    // This must be AFTER the ALTER TABLE migration for existing databases
+    // Using UNIQUE index enforces uniqueness even though ALTER TABLE couldn't add UNIQUE constraint
+    try {
+      this.db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_match_code ON matches(match_code)`
+      );
+    } catch (error) {
+      // Index might already exist or column doesn't exist yet
+      // This is safe to ignore
+    }
+
+    // Migrate existing matches without match codes
+    // This generates match codes for any matches that don't have them yet
+    this.migrateMatchCodes();
 
     console.log("Database initialized successfully");
   }
@@ -151,6 +178,7 @@ class DatabaseService {
   /**
    * Upsert a match from the API
    * Only accepts fields that are inserted/updated in the SQL
+   * Generates daily_id and match_code for new matches
    */
   upsertMatch(match: {
     api_match_id: number;
@@ -163,22 +191,45 @@ class DatabaseService {
     home_score: number | null;
     away_score: number | null;
   }): number {
-    const stmt = this.db.prepare(`
+    // Check if match already exists
+    const existing = this.getMatchByApiId(match.api_match_id);
+
+    if (existing) {
+      // Update existing match (don't change daily_id or match_code)
+      const updateStmt = this.db.prepare(`
+        UPDATE matches
+        SET status = ?,
+            home_score = ?,
+            away_score = ?,
+            kickoff_time = ?
+        WHERE api_match_id = ?
+      `);
+      updateStmt.run(
+        match.status,
+        match.home_score,
+        match.away_score,
+        match.kickoff_time,
+        match.api_match_id
+      );
+      return existing.id;
+    }
+
+    // New match - generate daily_id and match_code
+    const dateString = this.getDateString(match.kickoff_time);
+    const dailyId = this.getNextDailyIdForDate(dateString);
+    const matchCode = this.generateMatchCode(match.kickoff_time, dailyId);
+
+    const insertStmt = this.db.prepare(`
       INSERT INTO matches (
         api_match_id, home_team, away_team, competition, competition_code,
-        kickoff_time, status, home_score, away_score
+        kickoff_time, status, home_score, away_score, daily_id, match_code
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
-      ON CONFLICT(api_match_id) DO UPDATE SET
-        status = excluded.status,
-        home_score = excluded.home_score,
-        away_score = excluded.away_score,
-        kickoff_time = excluded.kickoff_time
       RETURNING id
     `);
 
-    const result = stmt.get(
+    const result = insertStmt.get(
       match.api_match_id,
       match.home_team,
       match.away_team,
@@ -187,8 +238,11 @@ class DatabaseService {
       match.kickoff_time,
       match.status,
       match.home_score,
-      match.away_score
+      match.away_score,
+      dailyId,
+      matchCode
     ) as { id: number };
+
     return result.id;
   }
 
@@ -275,7 +329,7 @@ class DatabaseService {
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
     const stmt = this.db.prepare(`
-      SELECT * FROM matches 
+      SELECT * FROM matches
       WHERE kickoff_time >= ? AND kickoff_time < ?
       ORDER BY kickoff_time ASC
     `);
@@ -284,6 +338,18 @@ class DatabaseService {
       Math.floor(today.getTime() / 1000),
       Math.floor(tomorrow.getTime() / 1000)
     ) as DBMatch[];
+  }
+
+  /**
+   * Get all matches (for admin/migration purposes)
+   */
+  getAllMatches(): DBMatch[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      ORDER BY kickoff_time DESC
+    `);
+
+    return stmt.all() as DBMatch[];
   }
 
   /**
@@ -353,7 +419,10 @@ class DatabaseService {
    * Returns { firstKickoff, lastKickoff } in Unix timestamp (seconds)
    * Returns null if no matches
    */
-  getTodaysKickoffRange(): { firstKickoff: number; lastKickoff: number } | null {
+  getTodaysKickoffRange(): {
+    firstKickoff: number;
+    lastKickoff: number;
+  } | null {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -438,6 +507,126 @@ class DatabaseService {
     stmt.run(matchId);
   }
 
+  /**
+   * Get match by match code (persistent identifier)
+   * Format: YYYYMMDD-N (e.g., 20260111-2)
+   */
+  getMatchByMatchCode(matchCode: string): DBMatch | undefined {
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches WHERE match_code = ?
+    `);
+    return stmt.get(matchCode) as DBMatch | undefined;
+  }
+
+  /**
+   * Get next daily_id for a specific date
+   * Ensures sequential assignment regardless of fetch order
+   */
+  getNextDailyIdForDate(date: string): number {
+    // date format: "2026-01-12"
+    const dateStart = new Date(date + "T00:00:00Z");
+    const dateEnd = new Date(date + "T23:59:59Z");
+
+    const stmt = this.db.prepare(`
+      SELECT MAX(daily_id) as max_id
+      FROM matches
+      WHERE kickoff_time >= ? AND kickoff_time < ?
+    `);
+
+    const result = stmt.get(
+      Math.floor(dateStart.getTime() / 1000),
+      Math.floor(dateEnd.getTime() / 1000)
+    ) as { max_id: number | null };
+
+    return (result.max_id || 0) + 1;
+  }
+
+  /**
+   * Generate match code for a match
+   * Format: YYYYMMDD-N
+   */
+  generateMatchCode(kickoffTime: number, dailyId: number): string {
+    const date = new Date(kickoffTime * 1000);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    return `${year}${month}${day}-${dailyId}`;
+  }
+
+  /**
+   * Get date string from unix timestamp
+   * Format: YYYY-MM-DD
+   */
+  private getDateString(kickoffTime: number): string {
+    const date = new Date(kickoffTime * 1000);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Migrate existing matches to add match codes
+   * Called during database initialization
+   */
+  private migrateMatchCodes(): void {
+    try {
+      // Check if match_code column exists by attempting to query it
+      const testStmt = this.db.prepare(`
+        SELECT match_code FROM matches LIMIT 1
+      `);
+      testStmt.get(); // This will throw if column doesn't exist
+    } catch (error) {
+      // Column doesn't exist yet, skip migration
+      // This can happen on fresh databases before the column is added
+      return;
+    }
+
+    try {
+      // Get all matches without match codes
+      const stmt = this.db.prepare(`
+        SELECT * FROM matches WHERE match_code IS NULL
+      `);
+      const matches = stmt.all() as DBMatch[];
+
+      if (matches.length === 0) {
+        return; // No matches to migrate
+      }
+
+      console.log(
+        `🔄 Migrating ${matches.length} matches to add match codes...`
+      );
+
+      for (const match of matches) {
+        // Use existing daily_id if available, otherwise use match id
+        const dailyId = match.daily_id || match.id;
+        const matchCode = this.generateMatchCode(match.kickoff_time, dailyId);
+
+        const updateStmt = this.db.prepare(`
+          UPDATE matches
+          SET match_code = ?
+          WHERE id = ?
+        `);
+
+        try {
+          updateStmt.run(matchCode, match.id);
+        } catch (error) {
+          // If match_code collision (unlikely), use match id as fallback
+          const fallbackCode = this.generateMatchCode(
+            match.kickoff_time,
+            match.id
+          );
+          updateStmt.run(fallbackCode, match.id);
+        }
+      }
+
+      console.log(`✅ Migrated ${matches.length} matches with match codes`);
+    } catch (error) {
+      console.error("Error during match code migration:", error);
+      // Don't throw - allow app to continue even if migration fails
+    }
+  }
+
   // ==================== PENDING BETS ====================
 
   /**
@@ -506,9 +695,7 @@ class DatabaseService {
   /**
    * Get pending bet by interaction ID
    */
-  getPendingBetByInteractionId(
-    interactionId: string
-  ): PendingBet | undefined {
+  getPendingBetByInteractionId(interactionId: string): PendingBet | undefined {
     const stmt = this.db.prepare(`
       SELECT * FROM pending_bets WHERE interaction_id = ?
     `);
@@ -637,9 +824,7 @@ class DatabaseService {
     const stmt = this.db.prepare(`
       SELECT wallet_address FROM bets WHERE user_id = ? AND match_id = ?
     `);
-    return stmt.get(userId, matchId) as
-      | { wallet_address: string }
-      | undefined;
+    return stmt.get(userId, matchId) as { wallet_address: string } | undefined;
   }
 
   /**
@@ -754,18 +939,20 @@ class DatabaseService {
   getUserBetForMatch(
     userId: string,
     matchId: number
-  ): {
-    id: number;
-    user_id: string;
-    wallet_address: string;
-    match_id: number;
-    on_chain_match_id: number;
-    prediction: number;
-    amount: string;
-    tx_hash: string | null;
-    placed_at: number;
-    claimed: number;
-  } | undefined {
+  ):
+    | {
+        id: number;
+        user_id: string;
+        wallet_address: string;
+        match_id: number;
+        on_chain_match_id: number;
+        prediction: number;
+        amount: string;
+        tx_hash: string | null;
+        placed_at: number;
+        claimed: number;
+      }
+    | undefined {
     const stmt = this.db.prepare(`
       SELECT * FROM bets WHERE user_id = ? AND match_id = ?
     `);
@@ -808,6 +995,8 @@ class DatabaseService {
     home_score: number | null;
     away_score: number | null;
     result: number;
+    daily_id: number | null;
+    match_code: string | null;
   }> {
     const stmt = this.db.prepare(`
       SELECT
@@ -828,7 +1017,9 @@ class DatabaseService {
         m.kickoff_time,
         m.home_score,
         m.away_score,
-        m.result
+        m.result,
+        m.daily_id,
+        m.match_code
       FROM bets b
       INNER JOIN matches m ON b.match_id = m.id
       WHERE b.user_id = ?
@@ -856,6 +1047,8 @@ class DatabaseService {
       home_score: number | null;
       away_score: number | null;
       result: number;
+      daily_id: number | null;
+      match_code: string | null;
     }>;
   }
 

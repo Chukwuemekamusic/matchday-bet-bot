@@ -20,6 +20,7 @@ export interface DBMatch {
   api_match_id: number;
   on_chain_match_id: number | null;
   daily_id: number | null;
+  match_code: string | null; // Format: YYYYMMDD-N (e.g., 20260111-2)
   home_team: string;
   away_team: string;
   competition: string;

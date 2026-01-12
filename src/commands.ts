@@ -47,6 +47,10 @@ const commands = [
     description: "Claim winnings from a specific match",
   },
   {
+    name: "claim_refund",
+    description: "Claim refund from a cancelled match",
+  },
+  {
     name: "claimable",
     description: "List all your unclaimed winnings",
   },
@@ -75,6 +79,10 @@ const commands = [
   {
     name: "fetch",
     description: "Manually fetch today's matches from API",
+  },
+  {
+    name: "migrate_matches",
+    description: "🔧 [Admin] Regenerate match codes for all matches",
   },
 
   /*//////////////////////////////////////////////////////////////
@@ -107,6 +115,10 @@ const commands = [
   {
     name: "userHasBet",
     description: "🔧 Test if user has bet on a match",
+  },
+  {
+    name: "resolve",
+    description: "🔧 [Admin] Manually resolve a finished match",
   },
 ] as const satisfies BotCommand[];
 
