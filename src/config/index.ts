@@ -30,6 +30,14 @@ export const config = {
     rpcUrl: optionalEnv("BASE_RPC_URL", "https://mainnet.base.org"),
   },
 
+  // The Graph Subgraph
+  subgraph: {
+    url: optionalEnv(
+      "SUBGRAPH_URL",
+      "https://api.studio.thegraph.com/query/93996/matchdaybet-2/version/latest"
+    ),
+  },
+
   // Football API
   footballApi: {
     apiKey: requireEnv("FOOTBALL_API_KEY"),

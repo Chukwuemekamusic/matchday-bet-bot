@@ -17,6 +17,8 @@
     "@towns-protocol/bot": "^0.0.453",
     "@towns-protocol/proto": "^0.0.453",
     "@towns-protocol/web3": "^0.0.453",
+    "graphql": "^16.12.0",
+    "graphql-request": "^7.4.0",
     "hono": "^4.7.11",
     "viem": "^2.29.3"
   },

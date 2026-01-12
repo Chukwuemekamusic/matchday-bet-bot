@@ -162,3 +162,106 @@ export const OUTCOME_NAMES: Record<Outcome, string> = {
   [Outcome.DRAW]: "Draw",
   [Outcome.AWAY]: "Away",
 };
+
+// ============ Subgraph GraphQL Types ============
+
+export interface SubgraphBet {
+  id: string; // Format: matchId-userAddress
+  amount: string; // BigInt as string
+  prediction: "HOME" | "DRAW" | "AWAY" | "NONE";
+  claimed: boolean;
+  payout: string | null; // BigInt as string
+  profit: string | null; // BigInt as string
+  placedAt: string; // BigInt timestamp as string
+  claimedAt: string | null; // BigInt timestamp as string
+  match: {
+    id: string;
+    matchId: string;
+    homeTeam: string;
+    awayTeam: string;
+    competition: string;
+    kickoffTime: string;
+    status: "OPEN" | "CLOSED" | "RESOLVED" | "CANCELLED";
+    result: "HOME" | "DRAW" | "AWAY" | "NONE";
+    totalPool: string;
+    homePool: string;
+    drawPool: string;
+    awayPool: string;
+    platformFeeAmount: string;
+    totalClaimed: string;
+    cancellationReason: string | null;
+  };
+}
+
+export interface SubgraphUser {
+  id: string; // User address
+  address: string;
+  totalBets: string; // BigInt as string
+  totalWagered: string;
+  totalWon: string;
+  totalClaimed: string;
+  totalProfit: string; // Can be negative
+  winCount: string;
+  lossCount: string;
+  refundCount: string;
+  firstBetAt: string;
+  lastBetAt: string;
+  lastActivityAt: string;
+}
+
+export interface SubgraphGlobalStats {
+  id: string; // Always "1"
+  totalMatches: string;
+  activeMatches: string;
+  resolvedMatches: string;
+  cancelledMatches: string;
+  totalBets: string;
+  totalVolume: string;
+  totalFeesCollected: string;
+  totalPayouts: string;
+  uniqueBettors: string;
+  lastUpdatedAt: string;
+}
+
+// Query response types
+export interface GetUserClaimableResponse {
+  bets: SubgraphBet[];
+}
+
+export interface GetUserStatsResponse {
+  user: SubgraphUser | null;
+}
+
+export interface GetLeaderboardResponse {
+  users: SubgraphUser[];
+}
+
+export interface GetGlobalStatsResponse {
+  globalStats: SubgraphGlobalStats | null;
+}
+
+// Processed claimable data (with database match info)
+export interface ClaimableMatch {
+  betId: string;
+  matchId: number; // On-chain match ID
+  onChainMatchId: string; // As string for display
+  matchCode: string; // YYYYMMDD-N
+  homeTeam: string;
+  awayTeam: string;
+  competition: string;
+  competitionCode: string;
+  kickoffTime: number; // Unix timestamp
+  prediction: Outcome;
+  amount: string; // ETH as string
+  payout: string | null; // ETH as string
+  profit: string | null; // ETH as string
+  type: "winning" | "refund";
+  claimed: boolean;
+}
+
+export interface ClaimableData {
+  winnings: ClaimableMatch[];
+  refunds: ClaimableMatch[];
+  totalWinningsAmount: string;
+  totalRefundsAmount: string;
+}

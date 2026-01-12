@@ -353,6 +353,25 @@ class DatabaseService {
   }
 
   /**
+   * Get matches from the last N days (for verification)
+   * Used by /verify command to check recent bets
+   */
+  getRecentMatches(daysBack: number = 7): DBMatch[] {
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setUTCDate(startDate.getUTCDate() - daysBack);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE kickoff_time >= ?
+      ORDER BY kickoff_time DESC
+    `);
+
+    return stmt.all(Math.floor(startDate.getTime() / 1000)) as DBMatch[];
+  }
+
+  /**
    * Get today's matches by competition
    */
   getTodaysMatchesByCompetition(competitionCode: string): DBMatch[] {
@@ -889,6 +908,19 @@ class DatabaseService {
       placed_at: number;
       claimed: number;
     }>;
+  }
+
+  /**
+   * Check if user has a bet on a specific match
+   * Used by /verify command to avoid duplicate DB entries
+   */
+  hasBet(userId: string, matchId: number): boolean {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM bets
+      WHERE user_id = ? AND match_id = ?
+    `);
+    const result = stmt.get(userId, matchId) as { count: number };
+    return result.count > 0;
   }
 
   /**

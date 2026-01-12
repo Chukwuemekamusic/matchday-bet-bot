@@ -464,6 +464,47 @@ class ContractService {
   }
 
   /**
+   * Batch check multiple matches for user bets (single RPC call using multicall)
+   * Used by /verify command to efficiently check recent matches
+   */
+  async getBatchUserBets(
+    matchIds: number[],
+    userAddress: string
+  ): Promise<Array<{ matchId: number; bet: ContractBet | null }>> {
+    try {
+      if (matchIds.length === 0) {
+        return [];
+      }
+
+      // Use multicall to batch all getUserBet calls into a single RPC request
+      const results = await this.publicClient.multicall({
+        contracts: matchIds.map((matchId) => ({
+          address: this.contractAddress,
+          abi: CONTRACT_ABI,
+          functionName: "getUserBet",
+          args: [BigInt(matchId), userAddress as Address],
+        })),
+      });
+
+      // Map results back to matchIds
+      return results.map((result, index) => {
+        let bet: ContractBet | null = null;
+        if (result.status === "success" && result.result) {
+          // Viem returns the contract result directly
+          bet = result.result as unknown as ContractBet;
+        }
+        return {
+          matchId: matchIds[index],
+          bet,
+        };
+      });
+    } catch (error) {
+      console.error("Failed to batch get user bets", error);
+      return matchIds.map((matchId) => ({ matchId, bet: null }));
+    }
+  }
+
+  /**
    * Check if user has bet on a match
    */
   async hasUserBet(matchId: number, userAddress: string): Promise<boolean> {

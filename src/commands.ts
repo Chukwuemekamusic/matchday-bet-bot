@@ -58,6 +58,10 @@ const commands = [
     name: "claim_all",
     description: "Claim all your unclaimed winnings at once",
   },
+  {
+    name: "verify",
+    description: "Verify and sync your bets with on-chain state",
+  },
 
   // Stats
   {
@@ -118,7 +122,7 @@ const commands = [
   },
   {
     name: "resolve",
-    description: "🔧 [Admin] Manually resolve a finished match",
+    description: "🔧 [Admin] Manually resolve a finished match (by # or match code)",
   },
 ] as const satisfies BotCommand[];
 
