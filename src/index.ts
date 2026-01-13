@@ -2,7 +2,7 @@ import { makeTownsBot, getSmartAccountFromUserId } from "@towns-protocol/bot";
 import { hexToBytes, formatEther } from "viem";
 import commands from "./commands";
 import { db } from "./db";
-import { ContractService } from "./services/contract";
+import { ContractService, CONTRACT_ABI } from "./services/contract";
 import { footballApi, FootballAPIService } from "./services/footballApi";
 import { subgraphService } from "./services/subgraph";
 import {
@@ -2724,19 +2724,39 @@ Waiting for confirmation on Base...
 
                   if (walletAddress) {
                     try {
-                      // Calculate winnings (bet amount is stored as string in DB)
-                      const betAmount = parseEth(userBet.amount);
-                      const winnings =
-                        await contractService.calculatePotentialWinnings(
-                          onChainMatchId,
-                          userBet.prediction,
-                          betAmount
-                        );
+                      // Parse WinningsClaimed event from transaction logs to get actual payout
+                      const { decodeEventLog } = await import("viem");
 
-                      const profit =
-                        winnings && winnings > betAmount
-                          ? winnings - betAmount
-                          : 0n;
+                      let winnings: bigint | null = null;
+                      let profit: bigint = 0n;
+
+                      // Find and decode WinningsClaimed event from logs
+                      for (const log of receipt.logs) {
+                        try {
+                          const decoded = decodeEventLog({
+                            abi: CONTRACT_ABI,
+                            data: log.data,
+                            topics: log.topics,
+                          });
+
+                          if (decoded.eventName === 'WinningsClaimed') {
+                            winnings = decoded.args.amount as bigint;
+                            profit = decoded.args.profit as bigint;
+                            break;
+                          }
+                        } catch (e) {
+                          // Skip logs that don't match our ABI
+                          continue;
+                        }
+                      }
+
+                      // Fallback: if event parsing failed, use bet amount as minimum
+                      if (winnings === null) {
+                        const betAmount = parseEth(userBet.amount);
+                        winnings = betAmount; // At minimum, user got their stake back
+                        profit = 0n;
+                        console.warn(`Could not parse WinningsClaimed event for match ${onChainMatchId}, using bet amount as fallback`);
+                      }
 
                       // Update database
                       db.updateBetClaimed(userId, match.id);

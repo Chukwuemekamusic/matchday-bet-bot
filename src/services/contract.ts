@@ -11,7 +11,7 @@ import config from "../config";
 import { Outcome, ContractMatch, ContractBet } from "../types";
 
 // Contract ABI (JSON format for complex types)
-const CONTRACT_ABI = [
+export const CONTRACT_ABI = [
   // Read functions with struct returns
   {
     type: "function",

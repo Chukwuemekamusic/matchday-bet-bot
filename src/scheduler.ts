@@ -26,6 +26,7 @@ interface SchedulerState {
   lastKickoff: number | null; // Unix timestamp
   resultsPollingActive: boolean;
   resultsPollingInterval: NodeJS.Timeout | null;
+  nextPollTimeout: NodeJS.Timeout | null; // For dynamic scheduling
 }
 
 const schedulerState: SchedulerState = {
@@ -34,7 +35,100 @@ const schedulerState: SchedulerState = {
   lastKickoff: null,
   resultsPollingActive: false,
   resultsPollingInterval: null,
+  nextPollTimeout: null,
 };
+
+/**
+ * Calculate expected finish time for a match
+ * Typical match: 90 min + ~5 min stoppage = 95 minutes
+ * @param kickoffTime - Unix timestamp of kickoff
+ * @returns Unix timestamp of expected finish time
+ */
+function calculateExpectedFinishTime(kickoffTime: number): number {
+  const TYPICAL_MATCH_DURATION = 95 * 60; // 95 minutes in seconds
+  return kickoffTime + TYPICAL_MATCH_DURATION;
+}
+
+/**
+ * Calculate next optimal poll time based on unresolved matches
+ * Strategy:
+ * - Before expected finish: Don't poll
+ * - After expected finish: Poll at +0, +5, +10, +20 min intervals
+ * - After 3 hours: Poll every 10 min (fallback for delayed matches)
+ * @returns Number of milliseconds until next poll, or null if no polling needed
+ */
+function calculateNextPollDelay(): number | null {
+  const unresolvedMatches = db.getMatchesAwaitingResults();
+
+  if (unresolvedMatches.length === 0) {
+    console.log("✅ No unresolved matches - polling not needed");
+    return null;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // Check if we're past the polling window (3h after last kickoff)
+  const pollingEnd = schedulerState.lastKickoff ? schedulerState.lastKickoff + (3 * 60 * 60) : null;
+  if (pollingEnd && now > pollingEnd) {
+    console.log("⏰ Past polling window (3h after last kickoff)");
+    return null;
+  }
+
+  // Find the earliest time we should poll
+  let earliestPollTime = Infinity;
+
+  for (const match of unresolvedMatches) {
+    const expectedFinish = calculateExpectedFinishTime(match.kickoff_time);
+    const timeSinceExpectedFinish = now - expectedFinish;
+
+    // If match hasn't reached expected finish yet, schedule for expected finish time
+    if (timeSinceExpectedFinish < 0) {
+      earliestPollTime = Math.min(earliestPollTime, expectedFinish);
+      continue;
+    }
+
+    // Match has passed expected finish - use progressive intervals
+    // Poll at: +0min, +5min, +10min, +20min, then every 10min
+    const intervals = [0, 5 * 60, 10 * 60, 20 * 60]; // in seconds
+
+    // Find which interval we're in
+    let nextPollTime = expectedFinish;
+    for (const interval of intervals) {
+      const pollTime = expectedFinish + interval;
+      if (now < pollTime) {
+        nextPollTime = pollTime;
+        break;
+      }
+    }
+
+    // If we've exhausted intervals, use 10-minute fallback
+    if (nextPollTime <= expectedFinish) {
+      // Find next 10-minute boundary after the last interval
+      const lastInterval = intervals[intervals.length - 1];
+      const timeSinceLastInterval = timeSinceExpectedFinish - lastInterval;
+      const nextTenMinBoundary = Math.ceil(timeSinceLastInterval / (10 * 60)) * (10 * 60);
+      nextPollTime = expectedFinish + lastInterval + nextTenMinBoundary;
+    }
+
+    earliestPollTime = Math.min(earliestPollTime, nextPollTime);
+  }
+
+  // If no valid poll time found, return null
+  if (earliestPollTime === Infinity) {
+    return null;
+  }
+
+  // Convert to milliseconds delay
+  const delaySeconds = Math.max(0, earliestPollTime - now);
+  const delayMs = delaySeconds * 1000;
+
+  // Log next poll timing
+  const nextPollDate = new Date(earliestPollTime * 1000);
+  const minutesUntil = Math.ceil(delaySeconds / 60);
+  console.log(`⏰ Next poll scheduled in ${minutesUntil} minute(s) at ${nextPollDate.toISOString()}`);
+
+  return delayMs;
+}
 
 /**
  * Start all scheduled tasks
@@ -109,6 +203,12 @@ export function stopScheduler(): void {
   if (schedulerState.resultsPollingInterval) {
     clearInterval(schedulerState.resultsPollingInterval);
     schedulerState.resultsPollingInterval = null;
+  }
+
+  // Stop next poll timeout if active
+  if (schedulerState.nextPollTimeout) {
+    clearTimeout(schedulerState.nextPollTimeout);
+    schedulerState.nextPollTimeout = null;
   }
 
   console.log("✅ Scheduler stopped");
@@ -209,21 +309,9 @@ async function morningFetch(): Promise<void> {
       console.log(`   First kickoff: ${new Date(kickoffRange.firstKickoff * 1000).toISOString()}`);
       console.log(`   Last kickoff: ${new Date(kickoffRange.lastKickoff * 1000).toISOString()}`);
 
-      // Schedule results polling to start after first match could finish (90 minutes after kickoff)
-      const resultsPollingStart = kickoffRange.firstKickoff + (90 * 60);
-      const now = Math.floor(Date.now() / 1000);
-
-      if (now < resultsPollingStart) {
-        const msUntilPolling = (resultsPollingStart - now) * 1000;
-        console.log(`⏰ Results polling will start in ${Math.floor(msUntilPolling / 60000)} minutes`);
-
-        setTimeout(() => {
-          startResultsPolling();
-        }, msUntilPolling);
-      } else {
-        // Already past start time, start immediately
-        startResultsPolling();
-      }
+      // Start smart polling immediately - it will calculate optimal timing
+      console.log(`🧠 Smart polling will schedule polls based on expected match finish times`);
+      startResultsPolling();
     }
   } catch (error) {
     console.error("❌ Failed to fetch matches:", error);
@@ -281,9 +369,8 @@ async function closeExpiredBetting(): Promise<void> {
 }
 
 /**
- * Start intelligent results polling
- * Polls every 15 minutes and auto-stops when all matches are resolved
- * or 3 hours after the last kickoff
+ * Start intelligent results polling with predictive scheduling
+ * Uses dynamic intervals based on expected match finish times
  */
 function startResultsPolling(): void {
   if (schedulerState.resultsPollingActive) {
@@ -291,16 +378,40 @@ function startResultsPolling(): void {
     return;
   }
 
-  console.log("🔍 Starting results polling (every 15 minutes)");
+  console.log("🔍 Starting smart predictive results polling");
   schedulerState.resultsPollingActive = true;
 
-  // Poll immediately
-  pollMatchResults();
+  // Schedule next poll dynamically
+  scheduleNextPoll();
+}
 
-  // Then poll every 15 minutes
-  schedulerState.resultsPollingInterval = setInterval(() => {
-    pollMatchResults();
-  }, 15 * 60 * 1000); // 15 minutes
+/**
+ * Schedule the next poll based on match state
+ */
+function scheduleNextPoll(): void {
+  // Clear any existing timeout
+  if (schedulerState.nextPollTimeout) {
+    clearTimeout(schedulerState.nextPollTimeout);
+    schedulerState.nextPollTimeout = null;
+  }
+
+  // Calculate when to poll next
+  const delayMs = calculateNextPollDelay();
+
+  if (delayMs === null) {
+    // No more polling needed
+    stopResultsPolling();
+    return;
+  }
+
+  // Schedule the poll
+  schedulerState.nextPollTimeout = setTimeout(async () => {
+    await pollMatchResults();
+    // After polling, schedule the next one
+    if (schedulerState.resultsPollingActive) {
+      scheduleNextPoll();
+    }
+  }, delayMs);
 }
 
 /**
@@ -318,6 +429,11 @@ function stopResultsPolling(): void {
     clearInterval(schedulerState.resultsPollingInterval);
     schedulerState.resultsPollingInterval = null;
   }
+
+  if (schedulerState.nextPollTimeout) {
+    clearTimeout(schedulerState.nextPollTimeout);
+    schedulerState.nextPollTimeout = null;
+  }
 }
 
 /**
@@ -325,6 +441,7 @@ function stopResultsPolling(): void {
  * Stops when all matches resolved OR 3 hours after last kickoff
  */
 async function pollMatchResults(): Promise<void> {
+  const pollStartTime = Date.now();
   const unresolvedMatches = db.getMatchesAwaitingResults();
 
   // Check if we should stop polling
@@ -343,7 +460,18 @@ async function pollMatchResults(): Promise<void> {
     return;
   }
 
-  console.log(`🔍 Checking results for ${unresolvedMatches.length} unresolved matches`);
+  console.log(`🔍 [Poll #${new Date().toISOString()}] Checking results for ${unresolvedMatches.length} unresolved matches`);
+
+  // Log match states for visibility
+  for (const match of unresolvedMatches) {
+    const expectedFinish = calculateExpectedFinishTime(match.kickoff_time);
+    const minutesSinceExpectedFinish = Math.floor((now - expectedFinish) / 60);
+    if (minutesSinceExpectedFinish >= 0) {
+      console.log(`   📊 ${match.home_team} vs ${match.away_team}: ${minutesSinceExpectedFinish} min past expected finish`);
+    } else {
+      console.log(`   ⏳ ${match.home_team} vs ${match.away_team}: ${Math.abs(minutesSinceExpectedFinish)} min until expected finish`);
+    }
+  }
 
   // Fetch all today's matches in one API call (more efficient)
   try {
@@ -426,9 +554,13 @@ async function pollMatchResults(): Promise<void> {
             const pools = await contractServiceInstance!.getPools(dbMatch.on_chain_match_id);
             const totalPool = pools ? formatEth(pools.total) : "?";
 
+            // Calculate resolution latency
+            const expectedFinish = calculateExpectedFinishTime(dbMatch.kickoff_time);
+            const resolutionLatencyMin = Math.floor((now - expectedFinish) / 60);
+
             console.log(
               `  ✓ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} ` +
-                `(${Outcome[outcome!]}, Pool: ${totalPool} ETH)`
+                `(${Outcome[outcome!]}, Pool: ${totalPool} ETH, Latency: ${resolutionLatencyMin} min after expected finish)`
             );
 
             // Post result to channel if configured
@@ -460,6 +592,10 @@ async function pollMatchResults(): Promise<void> {
         await postMatchResult(dbMatch, homeScore, awayScore);
       }
     }
+
+    // Log poll completion time
+    const pollDurationMs = Date.now() - pollStartTime;
+    console.log(`✅ Poll completed in ${pollDurationMs}ms`);
   } catch (error) {
     console.error("❌ Failed to poll match results:", error);
   }
