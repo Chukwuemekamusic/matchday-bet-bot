@@ -72,6 +72,10 @@ const commands = [
     name: "leaderboard",
     description: "Show top bettors by profit",
   },
+  {
+    name: "winners",
+    description: "Show winning bettors for a specific match",
+  },
 
   // Migration (Temporary)
   {
@@ -84,22 +88,11 @@ const commands = [
     name: "fetch",
     description: "Manually fetch today's matches from API",
   },
-  {
-    name: "migrate_matches",
-    description: "🔧 [Admin] Regenerate match codes for all matches",
-  },
 
   /*//////////////////////////////////////////////////////////////
                          DEBUG SLASH COMMANDS
     //////////////////////////////////////////////////////////////*/
-  {
-    name: "debug",
-    description: "🔧 Show bot and contract debug information",
-  },
-  {
-    name: "checkmanager",
-    description: "🔧 Check if bot is registered as match manager",
-  },
+
   {
     name: "contractinfo",
     description: "🔧 Show contract version and configuration",
@@ -109,20 +102,13 @@ const commands = [
     description: "🔧 Show bot wallet addresses and balance",
   },
   {
-    name: "testread",
-    description: "🔧 Test reading data from contract (next match ID)",
-  },
-  {
-    name: "testcreate",
-    description: "🔧 Test creating a match on-chain (requires manager role)",
-  },
-  {
     name: "userHasBet",
     description: "🔧 Test if user has bet on a match",
   },
   {
     name: "resolve",
-    description: "🔧 [Admin] Manually resolve a finished match (by # or match code)",
+    description:
+      "🔧 [Admin] Manually resolve a finished match (by # or match code)",
   },
 ] as const satisfies BotCommand[];
 

@@ -257,6 +257,7 @@ export interface ClaimableMatch {
   profit: string | null; // ETH as string
   type: "winning" | "refund";
   claimed: boolean;
+  reason?: string; // Optional reason for refund (e.g., "Match cancelled", "No winners")
 }
 
 export interface ClaimableData {

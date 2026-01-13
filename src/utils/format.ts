@@ -176,7 +176,18 @@ export function isBettingOpen(kickoffTime: number): boolean {
  * Uses match.daily_id for stable display numbers throughout the day
  */
 export function formatMatchDisplay(match: DBMatch, displayId?: number): string {
-  const { status, home_score, away_score, home_team, away_team, kickoff_time, total_pool, result, daily_id, match_code } = match;
+  const {
+    status,
+    home_score,
+    away_score,
+    home_team,
+    away_team,
+    kickoff_time,
+    total_pool,
+    result,
+    daily_id,
+    match_code,
+  } = match;
   const pool = match.on_chain_match_id ? formatEth(total_pool) : "0";
   // Use daily_id if available, otherwise fall back to displayId parameter
   const matchNumber = daily_id ?? displayId ?? "?";
@@ -195,14 +206,18 @@ export function formatMatchDisplay(match: DBMatch, displayId?: number): string {
       resultText = " | Draw ✅";
     }
 
-    return `🏁 **#${matchNumber}** ${home_team} ${home_score ?? 0}-${away_score ?? 0} ${away_team}${codeDisplay}\n   FT${resultText} | Pool: ${pool} ETH\n\n`;
+    return `🏁 **#${matchNumber}** ${home_team} ${home_score ?? 0}-${
+      away_score ?? 0
+    } ${away_team}${codeDisplay}\n   FT${resultText} | Pool: ${pool} ETH\n\n`;
   }
 
   // IN_PLAY, PAUSED, HALFTIME - Show live score
   if (["IN_PLAY", "PAUSED", "HALFTIME"].includes(status)) {
     const statusEmoji = status === "HALFTIME" ? "⏸️" : "⚽";
     const statusText = status === "HALFTIME" ? "HT" : "LIVE";
-    return `🔴 **#${matchNumber}** ${home_team} vs ${away_team}${codeDisplay}\n   ${statusEmoji} ${statusText} | ${home_score ?? 0}-${away_score ?? 0} | Pool: ${pool} ETH\n\n`;
+    return `🔴 **#${matchNumber}** ${home_team} vs ${away_team}${codeDisplay}\n   ${statusEmoji} ${statusText} | ${
+      home_score ?? 0
+    }-${away_score ?? 0} | Pool: ${pool} ETH\n\n`;
   }
 
   // POSTPONED or CANCELLED
@@ -213,5 +228,97 @@ export function formatMatchDisplay(match: DBMatch, displayId?: number): string {
   // SCHEDULED or TIMED - Show countdown
   const countdown = timeUntilKickoff(kickoff_time);
   const statusIcon = isBettingOpen(kickoff_time) ? "🟢" : "🔴";
-  return `${statusIcon} **#${matchNumber}** ${home_team} vs ${away_team}${codeDisplay}\n   ⏰ ${formatTime(kickoff_time)} (${countdown}) | 💰 ${pool} ETH\n\n`;
+  return `${statusIcon} **#${matchNumber}** ${home_team} vs ${away_team}${codeDisplay}\n   ⏰ ${formatTime(
+    kickoff_time
+  )} (${countdown}) | 💰 ${pool} ETH\n\n`;
 }
+
+// /migrate_matches - Admin command to regenerate match codes
+// bot.onSlashCommand(
+//   "migrate_matches",
+//   async (handler, { channelId, userId }) => {
+//     try {
+//       // Get all matches without match codes
+//       const allMatches = db.getAllMatches();
+//       const matchesWithoutCodes = allMatches.filter((m) => !m.match_code);
+
+//       if (matchesWithoutCodes.length === 0) {
+//         await handler.sendMessage(
+//           channelId,
+//           `✅ **All matches already have match codes!**
+
+// Total matches in database: ${allMatches.length}
+// Matches with codes: ${allMatches.length}
+
+// No migration needed.`
+//         );
+//         return;
+//       }
+
+//       await handler.sendMessage(
+//         channelId,
+//         `🔄 **Starting Match Code Migration**
+
+// Found ${matchesWithoutCodes.length} matches without match codes.
+// Generating codes now...`
+//       );
+
+//       // Regenerate match codes for all matches
+//       let successCount = 0;
+//       let errorCount = 0;
+
+//       for (const match of matchesWithoutCodes) {
+//         try {
+//           // Use existing daily_id if available, otherwise use match id
+//           const dailyId = match.daily_id || match.id;
+//           const matchCode = db.generateMatchCode(match.kickoff_time, dailyId);
+
+//           // Update the match with the new code
+//           const updateStmt = db["db"].prepare(`
+//           UPDATE matches
+//           SET match_code = ?
+//           WHERE id = ?
+//         `);
+
+//           try {
+//             updateStmt.run(matchCode, match.id);
+//             successCount++;
+//           } catch (error) {
+//             // If match_code collision (unlikely), use match id as fallback
+//             const fallbackCode = db.generateMatchCode(
+//               match.kickoff_time,
+//               match.id
+//             );
+//             updateStmt.run(fallbackCode, match.id);
+//             successCount++;
+//           }
+//         } catch (error) {
+//           console.error(`Error migrating match ${match.id}:`, error);
+//           errorCount++;
+//         }
+//       }
+
+//       await handler.sendMessage(
+//         channelId,
+//         `✅ **Migration Complete!**
+
+// Successfully migrated: ${successCount} matches
+// Errors: ${errorCount}
+// Total matches in database: ${allMatches.length}
+
+// All matches now have persistent match codes in format: YYYYMMDD-N
+// Example: 20260112-1 (first match on Jan 12, 2026)`
+//       );
+
+//       console.log(
+//         `✅ Match code migration completed by ${userId}: ${successCount} success, ${errorCount} errors`
+//       );
+//     } catch (error) {
+//       console.error("Error in /migrate_matches command:", error);
+//       await handler.sendMessage(
+//         channelId,
+//         "❌ Failed to migrate match codes. Check bot logs for details."
+//       );
+//     }
+//   }
+// );

@@ -231,15 +231,42 @@ export const subgraphService = {
 
       for (const bet of response.bets) {
         const isRefund = bet.match.status === "CANCELLED";
-        const isWinning = bet.match.status === "RESOLVED" && bet.prediction === bet.match.result;
 
-        if (isRefund || isWinning) {
+        // Check if winner pool is zero (no winners case)
+        let winnerPool = BigInt(0);
+        if (bet.match.status === "RESOLVED") {
+          try {
+            if (bet.match.result === "HOME" && bet.match.homePool) {
+              winnerPool = BigInt(bet.match.homePool);
+            } else if (bet.match.result === "DRAW" && bet.match.drawPool) {
+              winnerPool = BigInt(bet.match.drawPool);
+            } else if (bet.match.result === "AWAY" && bet.match.awayPool) {
+              winnerPool = BigInt(bet.match.awayPool);
+            }
+          } catch (e) {
+            console.warn(`Failed to parse winner pool for match ${bet.match.id}:`, e);
+            winnerPool = BigInt(0);
+          }
+        }
+        const isNoWinnersRefund = bet.match.status === "RESOLVED" && winnerPool === BigInt(0);
+
+        // Regular winning bet (user predicted correctly AND there are winners)
+        const isWinning =
+          bet.match.status === "RESOLVED" &&
+          bet.prediction === bet.match.result &&
+          winnerPool > BigInt(0);
+
+        if (isRefund || isNoWinnersRefund || isWinning) {
           const enriched = await enrichBetWithMatchData(
             bet,
-            isRefund ? "refund" : "winning"
+            (isRefund || isNoWinnersRefund) ? "refund" : "winning"
           );
           if (enriched) {
             if (isRefund) {
+              refunds.push(enriched);
+            } else if (isNoWinnersRefund) {
+              // Treat as refund (everyone gets stake back)
+              enriched.reason = "No winners - everyone gets refund";
               refunds.push(enriched);
             } else {
               winnings.push(enriched);
@@ -250,10 +277,24 @@ export const subgraphService = {
 
       // Calculate totals
       const totalWinningsAmount = winnings
-        .reduce((sum, bet) => sum + BigInt(bet.payout || "0"), BigInt(0))
+        .reduce((sum, bet) => {
+          try {
+            return sum + BigInt(bet.payout || "0");
+          } catch (e) {
+            console.warn("Failed to parse payout:", bet.payout);
+            return sum;
+          }
+        }, BigInt(0))
         .toString();
       const totalRefundsAmount = refunds
-        .reduce((sum, bet) => sum + BigInt(bet.amount), BigInt(0))
+        .reduce((sum, bet) => {
+          try {
+            return sum + BigInt(bet.amount || "0");
+          } catch (e) {
+            console.warn("Failed to parse refund amount:", bet.amount);
+            return sum;
+          }
+        }, BigInt(0))
         .toString();
 
       return {

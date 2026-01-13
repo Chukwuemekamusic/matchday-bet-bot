@@ -64,11 +64,7 @@ bot.onSlashCommand("help", async (handler, { channelId }) => {
 • \`/leaderboard\` - Show top bettors
 
 **Debug Commands:**
-• \`/debug\` - Show comprehensive debug info
-• \`/checkmanager\` - Check if bot is match manager
 • \`/contractinfo\` - Show contract details
-• \`/botinfo\` - Show bot wallet info
-• \`/testread\` - Test reading from contract
 • \`/testcreate\` - Test creating a match (requires manager)
 
 💰 Stakes: ${config.betting.minStake} - ${config.betting.maxStake} ETH`;
@@ -687,8 +683,8 @@ bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
               ? "🎉 WON"
               : "❌ LOST"
             : match.status === "POSTPONED"
-              ? "⚠️ POSTPONED"
-              : "❌ CANCELLED";
+            ? "⚠️ POSTPONED"
+            : "❌ CANCELLED";
 
         // Format: "Juventus 3-1 Cremonese (20260112-2)"
         const score =
@@ -1013,20 +1009,65 @@ Use \`/claimable\` to see matches you can claim from.`
       return;
     }
 
-    // Check if user's prediction was correct
-    if (userBet.prediction !== match.result) {
-      const userPrediction = formatOutcome(userBet.prediction);
-      const actualResult = formatOutcome(match.result);
+    // Get wallet address (needed for claim status check)
+    const walletAddress = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
 
+    if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        `😔 Your bet didn't win.
+        `❌ Couldn't retrieve your wallet address. Please try again or contact support.`
+      );
+      return;
+    }
+
+    // Use V2's getClaimStatus to determine eligibility
+    // This handles both regular wins AND "no winners" refund cases
+    const claimStatus = await contractService.getClaimStatus(
+      match.on_chain_match_id,
+      walletAddress
+    );
+
+    if (!claimStatus || !claimStatus.canClaim) {
+      // Check if it's because they didn't win (not a "no winners" case)
+      if (userBet.prediction !== match.result) {
+        const userPrediction = formatOutcome(userBet.prediction);
+        const actualResult = formatOutcome(match.result);
+
+        await handler.sendMessage(
+          channelId,
+          `😔 Your bet didn't win.
 
 **${match.home_team} vs ${match.away_team}**
 Your Prediction: ${userPrediction}
 Result: ${actualResult}
 
 Better luck next time!`
+        );
+        return;
+      }
+
+      // Some other reason they can't claim
+      await handler.sendMessage(
+        channelId,
+        `❌ Unable to claim winnings for this match. ${
+          claimStatus
+            ? "Reason: " +
+              (claimStatus.claimType === 0 ? "Not eligible" : "Unknown")
+            : "Please contact support."
+        }`
+      );
+      return;
+    }
+
+    // claimType: 0 = none, 1 = winnings (includes "no winners" refund), 2 = refund (cancelled)
+    if (claimStatus.claimType !== 1) {
+      await handler.sendMessage(
+        channelId,
+        `❌ This match requires a refund claim, not a winnings claim.
+
+Use \`/claim_refund ${match.match_code || match.id}\` instead.`
       );
       return;
     }
@@ -1045,18 +1086,6 @@ Use \`/stats\` to see your total winnings.`
     }
 
     // Get on-chain bet to calculate winnings
-    const walletAddress = await getSmartAccountFromUserId(bot, {
-      userId: userId as `0x${string}`,
-    });
-
-    if (!walletAddress) {
-      await handler.sendMessage(
-        channelId,
-        `❌ Couldn't retrieve your wallet address. Please try again or contact support.`
-      );
-      return;
-    }
-
     const onChainBet = await contractService.getUserBet(
       match.on_chain_match_id,
       walletAddress
@@ -1088,12 +1117,8 @@ Use \`/stats\` to see your total winnings.`
       return;
     }
 
-    // Calculate potential winnings
-    const potentialWinnings = await contractService.calculatePotentialWinnings(
-      match.on_chain_match_id,
-      userBet.prediction,
-      BigInt(onChainBet.amount)
-    );
+    // Use claimStatus amount (already calculated by V2)
+    const potentialWinnings = claimStatus.amount;
 
     if (!potentialWinnings || potentialWinnings === 0n) {
       await handler.sendMessage(
@@ -1107,17 +1132,37 @@ Use \`/stats\` to see your total winnings.`
 
     // Create interaction for claiming
     const interactionId = `claim-${match.id}-${userId}-${Date.now()}`;
-    const profit = potentialWinnings - BigInt(onChainBet.amount);
+    const stakeAmount = BigInt(onChainBet.amount);
+    const profit = potentialWinnings - stakeAmount;
 
-    const message = `💰 **Claim Your Winnings**
+    // Check if this is a "no winners" refund case (payout = stake)
+    const isNoWinnersRefund =
+      profit === 0n && userBet.prediction !== match.result;
+
+    let message: string;
+    if (isNoWinnersRefund) {
+      message = `💰 **Claim Your Refund**
+
+**Match:** ${match.home_team} vs ${match.away_team}
+**Your Prediction:** ${formatOutcome(userBet.prediction)}
+**Actual Result:** ${formatOutcome(match.result)}
+**Stake:** ${formatEth(stakeAmount)} ETH
+**Refund Amount:** ${formatEth(potentialWinnings)} ETH
+
+ℹ️ **No one predicted the correct outcome.** Everyone gets a full refund of their stake.
+
+Ready to claim your refund?`;
+    } else {
+      message = `💰 **Claim Your Winnings**
 
 **Match:** ${match.home_team} vs ${match.away_team}
 **Your Prediction:** ${formatOutcome(userBet.prediction)} ✅
-**Stake:** ${formatEth(BigInt(onChainBet.amount))} ETH
+**Stake:** ${formatEth(stakeAmount)} ETH
 **Payout:** ${formatEth(potentialWinnings)} ETH
 **Profit:** ${formatEth(profit)} ETH
 
 Ready to claim your winnings?`;
+    }
 
     // Send interactive message with buttons
     await handler.sendInteractionRequest(
@@ -1283,16 +1328,14 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
 
         // Add specific reason
         if (eligibility.reason) {
-          if (
-            eligibility.reason.includes("Use /claim to get your stake back")
-          ) {
+          if (eligibility.reason.includes("Use /claim")) {
             message += `${eligibility.reason}`;
           } else if (eligibility.reason === "Already claimed") {
             message += `You've already claimed your refund for this match.`;
           } else if (eligibility.reason === "No bet found") {
             message += `You didn't place a bet on this match.`;
           } else if (eligibility.reason === "Match resolved - you lost") {
-            message += `This match has been resolved and you didn't win. Only cancelled matches or matches with no winners are eligible for refunds.`;
+            message += `This match has been resolved and you didn't win. Only cancelled matches are eligible for refunds via this command.`;
           } else {
             message += `Reason: ${eligibility.reason}`;
           }
@@ -1330,11 +1373,9 @@ Wallet: ${truncateAddress(walletAddress)}`
         statusDisplay = "CANCELLED ❌";
         reasonText =
           "This match was cancelled. You can claim a full refund of your stake.";
-      } else if (eligibility.reason === "No winners - everyone gets refund") {
-        statusDisplay = "RESOLVED (No Winners) 🔄";
-        reasonText =
-          "No one predicted the correct outcome. Everyone gets a full refund.";
       }
+      // Note: "No winners" case is now handled by /claim (claimWinnings), not /claim_refund
+      // isRefundEligible() returns eligible=false for that case
 
       const message = `💸 **Claim Your Refund**
 
@@ -1469,7 +1510,7 @@ Use \`/matches\` to see today's matches and place new bets!`
         message += `├ Competition: ${match.competition}\n`;
         message += `├ Your Pick: ${formatOutcome(match.prediction)}\n`;
         message += `├ Refund Amount: ${match.amount} ETH\n`;
-        message += `└ Reason: Match cancelled\n\n`;
+        message += `└ Reason: ${match.reason || "Match cancelled"}\n\n`;
       }
     }
 
@@ -1480,7 +1521,13 @@ Use \`/matches\` to see today's matches and place new bets!`
       message += `Use \`/claim ${winnings[0].matchCode}\` to claim winnings.\n`;
     }
     if (refunds.length > 0) {
-      message += `Use \`/claim_refund ${refunds[0].matchCode}\` to claim refunds.`;
+      // For "no winners" refunds, use /claim; for cancelled, use /claim_refund
+      const refundMatch = refunds[0];
+      if (refundMatch.reason?.includes("No winners")) {
+        message += `Use \`/claim ${refundMatch.matchCode}\` to claim refund.`;
+      } else {
+        message += `Use \`/claim_refund ${refundMatch.matchCode}\` to claim refund.`;
+      }
     }
 
     await handler.sendMessage(channelId, message);
@@ -1732,6 +1779,218 @@ bot.onSlashCommand("leaderboard", async (handler, { channelId }) => {
   }
 });
 
+// /winners - Show winning bettors for a specific match
+bot.onSlashCommand("winners", async (handler, { channelId, args }) => {
+  try {
+    // Validate arguments
+    if (args.length !== 1) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Invalid Usage**
+
+**Usage:** \`/winners <match#|match_code>\`
+
+**Examples:**
+  \`/winners 1\` (today's match #1)
+  \`/winners 20260110-4\` (specific match by code)
+
+Use \`/matches\` to see today's match numbers.`
+      );
+      return;
+    }
+
+    const input = args[0];
+    let match: DBMatch | undefined;
+
+    // Check if input is a match code (contains dash) or just a number
+    if (input.includes("-")) {
+      // Full match code provided (e.g., 20260110-4)
+      match = db.getMatchByMatchCode(input);
+
+      if (!match) {
+        await handler.sendMessage(
+          channelId,
+          `❌ Match \`${input}\` not found. Use \`/matches\` to see available matches.`
+        );
+        return;
+      }
+    } else {
+      // Just a number - try as today's match
+      const matchNum = parseInt(input);
+
+      if (isNaN(matchNum) || matchNum < 1) {
+        await handler.sendMessage(
+          channelId,
+          "❌ Invalid match number. Use `/matches` to see available matches."
+        );
+        return;
+      }
+
+      // Try to find today's match with this daily_id
+      match = db.getMatchByDailyId(matchNum);
+
+      if (!match) {
+        // Generate today's match code hint
+        const today = new Date();
+        const year = today.getUTCFullYear();
+        const month = String(today.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(today.getUTCDate()).padStart(2, "0");
+        const todayCode = `${year}${month}${day}-${matchNum}`;
+
+        await handler.sendMessage(
+          channelId,
+          `❌ Match #${matchNum} not found for today.
+
+**Looking for an older match?**
+Try: \`/winners ${todayCode}\` for match #${matchNum} from another day
+
+Use \`/matches\` to see today's matches.`
+        );
+        return;
+      }
+    }
+
+    // Check if match is finished
+    if (match.status !== "FINISHED") {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Match Not Finished**
+
+This match hasn't finished yet. Current status: ${match.status}
+
+Winners will be available once the match is resolved.`
+      );
+      return;
+    }
+
+    // Check if match has result
+    if (match.result === null) {
+      await handler.sendMessage(
+        channelId,
+        `❌ **Match Not Resolved**
+
+This match is finished but hasn't been resolved yet. Use \`/resolve ${
+          match.match_code || match.daily_id
+        }\` to resolve it (admin only).`
+      );
+      return;
+    }
+
+    // Check if match has on-chain ID
+    if (!match.on_chain_match_id) {
+      await handler.sendMessage(
+        channelId,
+        `ℹ️ **No Bets Placed**
+
+No bets were placed on this match (not created on-chain).`
+      );
+      return;
+    }
+
+    // Get all bets for this match
+    const allBets = db.getBetsForMatch(match.id);
+
+    if (allBets.length === 0) {
+      await handler.sendMessage(
+        channelId,
+        `ℹ️ **No Bets Placed**
+
+No bets were placed on this match.`
+      );
+      return;
+    }
+
+    // Separate winners and losers
+    const winners: typeof allBets = [];
+    const losers: { [key: number]: number } = { 1: 0, 2: 0, 3: 0 }; // HOME, DRAW, AWAY
+
+    for (const bet of allBets) {
+      if (bet.prediction === match.result) {
+        winners.push(bet);
+      } else {
+        losers[bet.prediction] = (losers[bet.prediction] || 0) + 1;
+      }
+    }
+
+    // Sort winners by bet amount (highest first)
+    winners.sort((a, b) => {
+      const amountA = BigInt(a.amount);
+      const amountB = BigInt(b.amount);
+      return amountA > amountB ? -1 : amountA < amountB ? 1 : 0;
+    });
+
+    // Build message
+    const matchCode = match.match_code || `#${match.daily_id || match.id}`;
+    const score =
+      match.home_score !== null && match.away_score !== null
+        ? `${match.home_score}-${match.away_score}`
+        : "";
+
+    let message = `🏆 **Match Winners**\n\n`;
+    message += `⚽ **${match.home_team} ${score} ${match.away_team}** (${matchCode})\n`;
+    message += `**Result:** ${formatOutcome(match.result)}\n\n`;
+
+    if (winners.length === 0) {
+      message += `ℹ️ **No Winners**\n\n`;
+      message += `All bettors lost this match. Pool will be redistributed or handled according to contract rules.\n\n`;
+    } else {
+      message += `💰 **Winning Bettors (${formatOutcome(match.result)}):**\n\n`;
+
+      // Fetch payouts for all winners
+      for (let i = 0; i < winners.length; i++) {
+        const bet = winners[i];
+        const betAmount = BigInt(bet.amount);
+        const payout = await contractService.calculatePotentialWinnings(
+          match.on_chain_match_id,
+          bet.prediction,
+          betAmount
+        );
+
+        const addressDisplay = truncateAddress(bet.wallet_address);
+        const betEth = formatEth(betAmount);
+        const payoutEth = payout ? formatEth(payout) : "?";
+        const claimedIcon = bet.claimed ? "✅ Claimed" : "⏳ Unclaimed";
+
+        message += `${
+          i + 1
+        }. ${addressDisplay} - Bet: ${betEth} ETH → Payout: ${payoutEth} ETH ${claimedIcon}\n`;
+      }
+      message += "\n";
+    }
+
+    // Add summary stats
+    message += `📊 **Summary:**\n`;
+    message += `• Total Winners: ${winners.length} (${formatOutcome(
+      match.result
+    )})\n`;
+
+    const loserCount = (losers[1] || 0) + (losers[2] || 0) + (losers[3] || 0);
+    if (loserCount > 0) {
+      const loserBreakdown: string[] = [];
+      if (losers[1] > 0) loserBreakdown.push(`Home: ${losers[1]}`);
+      if (losers[2] > 0) loserBreakdown.push(`Draw: ${losers[2]}`);
+      if (losers[3] > 0) loserBreakdown.push(`Away: ${losers[3]}`);
+      message += `• Total Losers: ${loserCount} (${loserBreakdown.join(
+        ", "
+      )})\n`;
+    }
+
+    message += `• Total Pool: ${formatEth(match.total_pool)} ETH`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Error in /winners command:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **Error**
+
+An error occurred while fetching match winners. Please try again.
+
+**Error:** ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+});
+
 // /migrate - Temporary command to migrate existing on-chain bets to DB
 bot.onSlashCommand("migrate", async (handler, { channelId, userId }) => {
   if (!contractService.isContractAvailable()) {
@@ -1977,96 +2236,6 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
     );
   }
 });
-
-// /migrate_matches - Admin command to regenerate match codes
-bot.onSlashCommand(
-  "migrate_matches",
-  async (handler, { channelId, userId }) => {
-    try {
-      // Get all matches without match codes
-      const allMatches = db.getAllMatches();
-      const matchesWithoutCodes = allMatches.filter((m) => !m.match_code);
-
-      if (matchesWithoutCodes.length === 0) {
-        await handler.sendMessage(
-          channelId,
-          `✅ **All matches already have match codes!**
-
-Total matches in database: ${allMatches.length}
-Matches with codes: ${allMatches.length}
-
-No migration needed.`
-        );
-        return;
-      }
-
-      await handler.sendMessage(
-        channelId,
-        `🔄 **Starting Match Code Migration**
-
-Found ${matchesWithoutCodes.length} matches without match codes.
-Generating codes now...`
-      );
-
-      // Regenerate match codes for all matches
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (const match of matchesWithoutCodes) {
-        try {
-          // Use existing daily_id if available, otherwise use match id
-          const dailyId = match.daily_id || match.id;
-          const matchCode = db.generateMatchCode(match.kickoff_time, dailyId);
-
-          // Update the match with the new code
-          const updateStmt = db["db"].prepare(`
-          UPDATE matches
-          SET match_code = ?
-          WHERE id = ?
-        `);
-
-          try {
-            updateStmt.run(matchCode, match.id);
-            successCount++;
-          } catch (error) {
-            // If match_code collision (unlikely), use match id as fallback
-            const fallbackCode = db.generateMatchCode(
-              match.kickoff_time,
-              match.id
-            );
-            updateStmt.run(fallbackCode, match.id);
-            successCount++;
-          }
-        } catch (error) {
-          console.error(`Error migrating match ${match.id}:`, error);
-          errorCount++;
-        }
-      }
-
-      await handler.sendMessage(
-        channelId,
-        `✅ **Migration Complete!**
-
-Successfully migrated: ${successCount} matches
-Errors: ${errorCount}
-Total matches in database: ${allMatches.length}
-
-All matches now have persistent match codes in format: YYYYMMDD-N
-Example: 20260112-1 (first match on Jan 12, 2026)`
-      );
-
-      console.log(
-        `✅ Match code migration completed by ${userId}: ${successCount} success, ${errorCount} errors`
-      );
-    } catch (error) {
-      console.error("Error in /migrate_matches command:", error);
-      await handler.sendMessage(
-        channelId,
-        "❌ Failed to migrate match codes. Check bot logs for details."
-      );
-    }
-  }
-);
 
 // ==================== INTERACTION HANDLERS ====================
 
@@ -2892,115 +3061,6 @@ function getCompetitionEmoji(code: string): string {
                          DEBUG SLASH COMMANDS
     //////////////////////////////////////////////////////////////*/
 
-// /debug - Comprehensive debug information
-bot.onSlashCommand("debug", async (handler, { channelId }) => {
-  try {
-    const [
-      isManager,
-      version,
-      owner,
-      nextMatchId,
-      stakeLimits,
-      platformFee,
-      accumulatedFees,
-      botBalance,
-    ] = await Promise.all([
-      contractService.isBotMatchManager(),
-      contractService.getVersion(),
-      contractService.getOwner(),
-      contractService.getNextMatchId(),
-      contractService.getStakeLimits(),
-      contractService.getPlatformFeeBps(),
-      contractService.getAccumulatedFees(),
-      contractService.getBotBalance(),
-    ]);
-
-    const message = `🔧 **Debug Information**
-
-**Bot Addresses:**
-• Signer (EOA): \`${contractService.getBotAddress()}\`
-• Treasury (Smart Account): \`${contractService.getBotTreasuryAddress()}\`
-• Balance: ${formatEth(botBalance)} ETH
-
-**Contract Info:**
-• Address: \`${contractService.getContractAddress()}\`
-• Version: ${version || "❌ Failed to read"}
-• Owner: \`${owner ? truncateAddress(owner) : "❌ Failed to read"}\`
-
-**Bot Status:**
-• Is Match Manager: ${isManager ? "✅ Yes" : "❌ No"}
-• Can Create Matches: ${isManager ? "✅ Yes" : "❌ No"}
-
-**Contract Config:**
-• Next Match ID: ${nextMatchId}
-• Min Stake: ${formatEth(stakeLimits.min)} ETH
-• Max Stake: ${formatEth(stakeLimits.max)} ETH
-• Platform Fee: ${platformFee ? Number(platformFee) / 100 : "?"}%
-• Accumulated Fees: ${accumulatedFees ? formatEth(accumulatedFees) : "?"} ETH
-
-**RPC:**
-• URL: ${config.chain.rpcUrl}
-
-${
-  !isManager
-    ? "\n⚠️ **WARNING:** Bot is NOT a match manager! Contract interactions will fail."
-    : ""
-}`;
-
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Debug command error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ Failed to fetch debug info: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
-  }
-});
-
-// /checkmanager - Check if bot is match manager
-bot.onSlashCommand("checkmanager", async (handler, { channelId }) => {
-  try {
-    const isManager = await contractService.isBotMatchManager();
-    const botAddress = contractService.getBotTreasuryAddress();
-
-    const message = `🔍 **Match Manager Check**
-
-**Bot Treasury Address:**
-\`${botAddress}\`
-
-**Status:**
-${
-  isManager
-    ? "✅ Bot IS registered as a match manager"
-    : "❌ Bot is NOT registered as a match manager"
-}
-
-${
-  !isManager
-    ? `\n**To fix this, run:**
-\`\`\`bash
-cast send ${contractService.getContractAddress()} \\
-  "addMatchManager(address)" ${botAddress} \\
-  --rpc-url $BASE_RPC_URL \\
-  --private-key $OWNER_PRIVATE_KEY
-\`\`\``
-    : ""
-}`;
-
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Check manager error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ Failed to check manager status: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
-  }
-});
-
 // /contractinfo - Show contract version and config
 bot.onSlashCommand("contractinfo", async (handler, { channelId }) => {
   try {
@@ -3054,8 +3114,26 @@ https://basescan.org/address/${contractService.getContractAddress()}`;
 });
 
 // /botinfo - Show bot wallet info
-bot.onSlashCommand("botinfo", async (handler, { channelId }) => {
+bot.onSlashCommand("botinfo", async (handler, { channelId, userId }) => {
   try {
+    // Get user's smart account address
+    const userSmartAccount = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+    // Check if user is admin (by EOA or smart account)
+    const isAdminByEOA =
+      userId.toLowerCase() === config.admin.userId.toLowerCase();
+    const isAdminBySmartAccount = userSmartAccount
+      ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
+      : false;
+
+    if (!isAdminByEOA && !isAdminBySmartAccount) {
+      await handler.sendMessage(
+        channelId,
+        "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+      );
+      return;
+    }
     const balance = await contractService.getBotBalance();
     const signerAddress = contractService.getBotAddress();
     const treasuryAddress = contractService.getBotTreasuryAddress();
@@ -3087,116 +3165,6 @@ ${
       `❌ Failed to fetch bot info: ${
         error instanceof Error ? error.message : "Unknown error"
       }`
-    );
-  }
-});
-
-// /testread - Test reading from contract
-bot.onSlashCommand("testread", async (handler, { channelId }) => {
-  try {
-    await handler.sendMessage(channelId, "🔄 Testing contract read...");
-
-    const startTime = Date.now();
-    const nextMatchId = await contractService.getNextMatchId();
-    const duration = Date.now() - startTime;
-
-    const message = `✅ **Contract Read Test Successful**
-
-**Function:** \`nextMatchId()\`
-**Result:** ${nextMatchId}
-**Duration:** ${duration}ms
-**RPC:** ${config.chain.rpcUrl}
-
-This confirms the bot can read from the contract! 🎉`;
-
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Test read error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ **Contract Read Test Failed**
-
-**Error:** ${error instanceof Error ? error.message : "Unknown error"}
-
-This means the bot cannot read from the contract. Check:
-• Contract address is correct
-• RPC URL is accessible
-• Contract is deployed at the address`
-    );
-  }
-});
-
-// /testcreate - Test creating a match (requires manager role)
-bot.onSlashCommand("testcreate", async (handler, { channelId }) => {
-  try {
-    // Check if bot is manager first
-    const isManager = await contractService.isBotMatchManager();
-    if (!isManager) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Cannot Test Match Creation**
-
-Bot is not registered as a match manager.
-Use \`/checkmanager\` for instructions on how to fix this.`
-      );
-      return;
-    }
-
-    await handler.sendMessage(
-      channelId,
-      "🔄 Testing match creation on-chain...\nThis will create a test match with kickoff in 24 hours."
-    );
-
-    const kickoffTime = Math.floor(Date.now() / 1000) + 86400; // 24 hours from now
-    const result = await contractService.createMatch(
-      "Test Team A",
-      "Test Team B",
-      "Test League",
-      kickoffTime
-    );
-
-    if (!result) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Match Creation Failed**
-
-Check the bot logs for details.
-Possible issues:
-• Insufficient gas in treasury
-• Transaction reverted
-• RPC issues`
-      );
-      return;
-    }
-
-    const message = `✅ **Match Creation Test Successful!**
-
-**Match ID:** ${result.matchId}
-**Transaction:** \`${result.txHash}\`
-**Teams:** Test Team A vs Test Team B
-**Kickoff:** ${formatTime(kickoffTime)}
-
-**View on BaseScan:**
-https://basescan.org/tx/${result.txHash}
-
-This confirms the bot can write to the contract! 🎉
-
-⚠️ This was a test match. You may want to cancel it using the contract's \`cancelMatch\` function.`;
-
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Test create error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ **Match Creation Test Failed**
-
-**Error:** ${error instanceof Error ? error.message : "Unknown error"}
-
-Check:
-• Bot has match manager role
-• Treasury has sufficient ETH for gas
-• RPC is working
-• Contract is not paused`
     );
   }
 });

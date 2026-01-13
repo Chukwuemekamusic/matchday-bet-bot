@@ -1056,8 +1056,10 @@ class DatabaseService {
       INNER JOIN matches m ON b.match_id = m.id
       WHERE b.user_id = ?
         AND b.claimed = 0
-        AND m.result IS NOT NULL
-        AND b.prediction = m.result
+        AND (
+          (m.result IS NOT NULL AND b.prediction = m.result)  -- Winning bets
+          OR m.status = 'CANCELLED'  -- Cancelled matches (refunds)
+        )
       ORDER BY m.kickoff_time DESC
     `);
     return stmt.all(userId) as Array<{

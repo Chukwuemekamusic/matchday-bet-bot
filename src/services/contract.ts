@@ -320,6 +320,71 @@ const CONTRACT_ABI = [
       { name: "profit", type: "uint256", indexed: false },
     ],
   },
+
+  // V2 Functions - Enhanced claim and batch operations
+  {
+    type: "function",
+    name: "getClaimStatus",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "canClaim", type: "bool" },
+          { name: "claimType", type: "uint8" }, // 0 = none, 1 = winnings, 2 = refund
+          { name: "amount", type: "uint256" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "getUnclaimedWinnings",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [
+      { name: "matchIds", type: "uint256[]" },
+      { name: "amounts", type: "uint256[]" },
+    ],
+  },
+  {
+    type: "function",
+    name: "getClaimableAmount",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "getBatchClaimableAmounts",
+    stateMutability: "view",
+    inputs: [
+      { name: "matchIds", type: "uint256[]" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "batchClaimWinnings",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchIds", type: "uint256[]" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "batchClaimRefunds",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchIds", type: "uint256[]" }],
+    outputs: [],
+  },
 ] as const;
 
 class ContractService {
@@ -679,6 +744,109 @@ class ContractService {
       })) as bigint;
     } catch (error) {
       console.error("Failed to get accumulated fees", error);
+      return null;
+    }
+  }
+
+  // ==================== V2 FUNCTIONS ====================
+
+  /**
+   * Get claim status for a user's bet on a specific match
+   * Returns: { canClaim: boolean, claimType: 0|1|2, amount: bigint }
+   * claimType: 0 = none, 1 = winnings, 2 = refund
+   */
+  async getClaimStatus(
+    matchId: number,
+    userAddress: Address
+  ): Promise<{ canClaim: boolean; claimType: number; amount: bigint } | null> {
+    try {
+      const result = (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "getClaimStatus",
+        args: [BigInt(matchId), userAddress],
+      })) as { canClaim: boolean; claimType: number; amount: bigint };
+      return result;
+    } catch (error) {
+      console.error(
+        `Failed to get claim status for match ${matchId} and user ${userAddress}`,
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get all unclaimed winnings for a user (V2)
+   * Returns arrays of match IDs and corresponding amounts
+   */
+  async getUnclaimedWinnings(
+    userAddress: Address
+  ): Promise<{ matchIds: bigint[]; amounts: bigint[] } | null> {
+    try {
+      const result = (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "getUnclaimedWinnings",
+        args: [userAddress],
+      })) as readonly [readonly bigint[], readonly bigint[]];
+
+      return {
+        matchIds: Array.from(result[0]),
+        amounts: Array.from(result[1]),
+      };
+    } catch (error) {
+      console.error(
+        `Failed to get unclaimed winnings for user ${userAddress}`,
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get claimable amount for a specific match and user
+   */
+  async getClaimableAmount(
+    matchId: number,
+    userAddress: Address
+  ): Promise<bigint | null> {
+    try {
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "getClaimableAmount",
+        args: [BigInt(matchId), userAddress],
+      })) as bigint;
+    } catch (error) {
+      console.error(
+        `Failed to get claimable amount for match ${matchId} and user ${userAddress}`,
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get claimable amounts for multiple matches in batch
+   */
+  async getBatchClaimableAmounts(
+    matchIds: number[],
+    userAddress: Address
+  ): Promise<bigint[] | null> {
+    try {
+      const matchIdsBigInt = matchIds.map((id) => BigInt(id));
+      return (await this.publicClient.readContract({
+        address: this.contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: "getBatchClaimableAmounts",
+        args: [matchIdsBigInt, userAddress],
+      })) as bigint[];
+    } catch (error) {
+      console.error(
+        `Failed to get batch claimable amounts for user ${userAddress}`,
+        error
+      );
       return null;
     }
   }
@@ -1163,10 +1331,11 @@ class ContractService {
         }
 
         // Case 3: No one bet on the winning outcome
+        // In V2, this is handled by claimWinnings(), not claimRefund()
         if (winnerPool === 0n) {
           return {
-            eligible: true,
-            reason: "No winners - everyone gets refund",
+            eligible: false,
+            reason: "Use /claim to get your refund (no winners - everyone gets refund)",
           };
         }
 
