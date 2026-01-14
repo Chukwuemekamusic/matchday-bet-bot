@@ -68,7 +68,9 @@ function calculateNextPollDelay(): number | null {
   const now = Math.floor(Date.now() / 1000);
 
   // Check if we're past the polling window (3h after last kickoff)
-  const pollingEnd = schedulerState.lastKickoff ? schedulerState.lastKickoff + (3 * 60 * 60) : null;
+  const pollingEnd = schedulerState.lastKickoff
+    ? schedulerState.lastKickoff + 3 * 60 * 60
+    : null;
   if (pollingEnd && now > pollingEnd) {
     console.log("⏰ Past polling window (3h after last kickoff)");
     return null;
@@ -106,7 +108,8 @@ function calculateNextPollDelay(): number | null {
       // Find next 10-minute boundary after the last interval
       const lastInterval = intervals[intervals.length - 1];
       const timeSinceLastInterval = timeSinceExpectedFinish - lastInterval;
-      const nextTenMinBoundary = Math.ceil(timeSinceLastInterval / (10 * 60)) * (10 * 60);
+      const nextTenMinBoundary =
+        Math.ceil(timeSinceLastInterval / (10 * 60)) * (10 * 60);
       nextPollTime = expectedFinish + lastInterval + nextTenMinBoundary;
     }
 
@@ -125,7 +128,9 @@ function calculateNextPollDelay(): number | null {
   // Log next poll timing
   const nextPollDate = new Date(earliestPollTime * 1000);
   const minutesUntil = Math.ceil(delaySeconds / 60);
-  console.log(`⏰ Next poll scheduled in ${minutesUntil} minute(s) at ${nextPollDate.toISOString()}`);
+  console.log(
+    `⏰ Next poll scheduled in ${minutesUntil} minute(s) at ${nextPollDate.toISOString()}`
+  );
 
   return delayMs;
 }
@@ -263,7 +268,10 @@ async function morningFetch(): Promise<void> {
         away_score: dbMatch.away_score,
       };
 
-      console.log("🔍 DEBUG - About to insert match:", JSON.stringify(matchData, null, 2));
+      console.log(
+        "🔍 DEBUG - About to insert match:",
+        JSON.stringify(matchData, null, 2)
+      );
       console.log("🔍 DEBUG - Types:", {
         api_match_id: typeof dbMatch.api_match_id,
         home_team: typeof dbMatch.home_team,
@@ -297,7 +305,9 @@ async function morningFetch(): Promise<void> {
     const unresolvedMatches = db.getUnresolvedOnChainMatches(48);
 
     if (matches.length === 0 && unresolvedMatches.length === 0) {
-      console.log("📅 No matches today and no unresolved matches. Sleeping until tomorrow.");
+      console.log(
+        "📅 No matches today and no unresolved matches. Sleeping until tomorrow."
+      );
       stopResultsPolling(); // Ensure polling is stopped
       return;
     }
@@ -318,11 +328,21 @@ async function morningFetch(): Promise<void> {
       schedulerState.lastKickoff = kickoffRange.lastKickoff;
 
       console.log(`⚽ ${matches.length} matches today`);
-      console.log(`   First kickoff: ${new Date(kickoffRange.firstKickoff * 1000).toISOString()}`);
-      console.log(`   Last kickoff: ${new Date(kickoffRange.lastKickoff * 1000).toISOString()}`);
+      console.log(
+        `   First kickoff: ${new Date(
+          kickoffRange.firstKickoff * 1000
+        ).toISOString()}`
+      );
+      console.log(
+        `   Last kickoff: ${new Date(
+          kickoffRange.lastKickoff * 1000
+        ).toISOString()}`
+      );
 
       // Start smart polling immediately - it will calculate optimal timing
-      console.log(`🧠 Smart polling will schedule polls based on expected match finish times`);
+      console.log(
+        `🧠 Smart polling will schedule polls based on expected match finish times`
+      );
       startResultsPolling();
     }
   } catch (error) {
@@ -434,7 +454,9 @@ function stopResultsPolling(): void {
     return;
   }
 
-  console.log("✅ Stopping results polling - all matches resolved or polling window ended");
+  console.log(
+    "✅ Stopping results polling - all matches resolved or polling window ended"
+  );
   schedulerState.resultsPollingActive = false;
 
   if (schedulerState.resultsPollingInterval) {
@@ -458,7 +480,9 @@ async function pollMatchResults(): Promise<void> {
 
   // Check if we should stop polling
   const now = Math.floor(Date.now() / 1000);
-  const pollingEnd = schedulerState.lastKickoff ? schedulerState.lastKickoff + (3 * 60 * 60) : null;
+  const pollingEnd = schedulerState.lastKickoff
+    ? schedulerState.lastKickoff + 3 * 60 * 60
+    : null;
 
   if (unresolvedMatches.length === 0) {
     console.log("✅ All matches resolved. Stopping results polling.");
@@ -467,21 +491,33 @@ async function pollMatchResults(): Promise<void> {
   }
 
   if (pollingEnd && now > pollingEnd) {
-    console.log("⏰ Polling window ended (3h after last kickoff). Stopping results polling.");
+    console.log(
+      "⏰ Polling window ended (3h after last kickoff). Stopping results polling."
+    );
     stopResultsPolling();
     return;
   }
 
-  console.log(`🔍 [Poll #${new Date().toISOString()}] Checking results for ${unresolvedMatches.length} unresolved matches`);
+  console.log(
+    `🔍 [Poll #${new Date().toISOString()}] Checking results for ${
+      unresolvedMatches.length
+    } unresolved matches`
+  );
 
   // Log match states for visibility
   for (const match of unresolvedMatches) {
     const expectedFinish = calculateExpectedFinishTime(match.kickoff_time);
     const minutesSinceExpectedFinish = Math.floor((now - expectedFinish) / 60);
     if (minutesSinceExpectedFinish >= 0) {
-      console.log(`   📊 ${match.home_team} vs ${match.away_team}: ${minutesSinceExpectedFinish} min past expected finish`);
+      console.log(
+        `   📊 ${match.home_team} vs ${match.away_team}: ${minutesSinceExpectedFinish} min past expected finish`
+      );
     } else {
-      console.log(`   ⏳ ${match.home_team} vs ${match.away_team}: ${Math.abs(minutesSinceExpectedFinish)} min until expected finish`);
+      console.log(
+        `   ⏳ ${match.home_team} vs ${match.away_team}: ${Math.abs(
+          minutesSinceExpectedFinish
+        )} min until expected finish`
+      );
     }
   }
 
@@ -492,7 +528,11 @@ async function pollMatchResults(): Promise<void> {
     // Also fetch updates for unresolved matches from previous days
     await footballApi.fetchUnresolvedMatchUpdates();
 
-    const matchesToResolve: Array<{ dbMatch: any; apiMatch: any; outcome: number }> = [];
+    const matchesToResolve: Array<{
+      dbMatch: any;
+      apiMatch: any;
+      outcome: number;
+    }> = [];
 
     // First pass: collect all finished matches
     for (const apiMatch of apiMatches) {
@@ -503,7 +543,9 @@ async function pollMatchResults(): Promise<void> {
           const dbMatch = db.getMatchByApiId(apiMatch.id!);
           if (dbMatch && dbMatch.status !== "LIVE") {
             db.updateMatchStatus(dbMatch.id, apiMatch.status);
-            console.log(`🔴 Match ${dbMatch.home_team} vs ${dbMatch.away_team} is now ${apiMatch.status}`);
+            console.log(
+              `🔴 Match ${dbMatch.home_team} vs ${dbMatch.away_team} is now ${apiMatch.status}`
+            );
           }
         }
         continue;
@@ -538,52 +580,83 @@ async function pollMatchResults(): Promise<void> {
 
     // Update all local databases first
     for (const { dbMatch, apiMatch, outcome } of matchesToResolve) {
-      const homeScore = apiMatch.score.fullTime.home;
-      const awayScore = apiMatch.score.fullTime.away;
-      db.updateMatchResult(dbMatch.id, homeScore, awayScore, outcome);
+      try {
+        const homeScore = apiMatch.score.fullTime.home;
+        const awayScore = apiMatch.score.fullTime.away;
+        db.updateMatchResult(dbMatch.id, homeScore, awayScore, outcome);
+      } catch (error) {
+        console.error(
+          `❌ Failed to update match result for match ${dbMatch.id}:`,
+          error
+        );
+      }
     }
 
     // Batch resolve on-chain if contract available
-    if (matchesToResolve.length > 0 && contractServiceInstance?.isContractAvailable()) {
-      const onChainMatches = matchesToResolve.filter(m => m.dbMatch.on_chain_match_id);
+    if (
+      matchesToResolve.length > 0 &&
+      contractServiceInstance?.isContractAvailable()
+    ) {
+      const onChainMatches = matchesToResolve.filter(
+        (m) => m.dbMatch.on_chain_match_id
+      );
 
       if (onChainMatches.length > 0) {
-        console.log(`📦 Batch resolving ${onChainMatches.length} matches on-chain...`);
+        console.log(
+          `📦 Batch resolving ${onChainMatches.length} matches on-chain...`
+        );
 
         const batchData = onChainMatches.map(({ dbMatch, outcome }) => ({
           matchId: dbMatch.on_chain_match_id,
           result: outcome,
         }));
 
-        const result = await contractServiceInstance.batchResolveMatches(batchData);
+        const result = await contractServiceInstance.batchResolveMatches(
+          batchData
+        );
 
         if (result) {
-          console.log(`✅ Successfully batch resolved ${onChainMatches.length} matches (tx: ${result.txHash})`);
+          console.log(
+            `✅ Successfully batch resolved ${onChainMatches.length} matches (tx: ${result.txHash})`
+          );
 
           // Log each resolved match and post results
           for (const { dbMatch, apiMatch } of onChainMatches) {
             const homeScore = apiMatch.score.fullTime.home;
             const awayScore = apiMatch.score.fullTime.away;
-            const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+            const outcome = FootballAPIService.determineOutcome(
+              homeScore,
+              awayScore
+            );
 
             // Get pool info for logging
-            const pools = await contractServiceInstance!.getPools(dbMatch.on_chain_match_id);
+            const pools = await contractServiceInstance!.getPools(
+              dbMatch.on_chain_match_id
+            );
             const totalPool = pools ? formatEth(pools.total) : "?";
 
             // Calculate resolution latency
-            const expectedFinish = calculateExpectedFinishTime(dbMatch.kickoff_time);
-            const resolutionLatencyMin = Math.floor((now - expectedFinish) / 60);
+            const expectedFinish = calculateExpectedFinishTime(
+              dbMatch.kickoff_time
+            );
+            const resolutionLatencyMin = Math.floor(
+              (now - expectedFinish) / 60
+            );
 
             console.log(
               `  ✓ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} ` +
-                `(${Outcome[outcome!]}, Pool: ${totalPool} ETH, Latency: ${resolutionLatencyMin} min after expected finish)`
+                `(${
+                  Outcome[outcome!]
+                }, Pool: ${totalPool} ETH, Latency: ${resolutionLatencyMin} min after expected finish)`
             );
 
             // Post result to channel if configured
             await postMatchResult(dbMatch, homeScore, awayScore);
           }
         } else {
-          console.error(`❌ Batch resolution failed. Falling back to individual resolution.`);
+          console.error(
+            `❌ Batch resolution failed. Falling back to individual resolution.`
+          );
           // Fallback to individual resolution
           for (const { dbMatch, apiMatch, outcome } of onChainMatches) {
             await resolveMatchFromAPI(dbMatch, apiMatch);
@@ -592,11 +665,15 @@ async function pollMatchResults(): Promise<void> {
       }
 
       // Handle matches without on-chain IDs (just post results)
-      const offChainMatches = matchesToResolve.filter(m => !m.dbMatch.on_chain_match_id);
+      const offChainMatches = matchesToResolve.filter(
+        (m) => !m.dbMatch.on_chain_match_id
+      );
       for (const { dbMatch, apiMatch } of offChainMatches) {
         const homeScore = apiMatch.score.fullTime.home;
         const awayScore = apiMatch.score.fullTime.away;
-        console.log(`✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} (no on-chain bets)`);
+        console.log(
+          `✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} (no on-chain bets)`
+        );
         await postMatchResult(dbMatch, homeScore, awayScore);
       }
     } else if (matchesToResolve.length > 0) {
@@ -604,7 +681,9 @@ async function pollMatchResults(): Promise<void> {
       for (const { dbMatch, apiMatch } of matchesToResolve) {
         const homeScore = apiMatch.score.fullTime.home;
         const awayScore = apiMatch.score.fullTime.away;
-        console.log(`✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team}`);
+        console.log(
+          `✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team}`
+        );
         await postMatchResult(dbMatch, homeScore, awayScore);
       }
     }
@@ -640,8 +719,13 @@ async function postMatchResult(
       : "Draw";
 
   let poolInfo = "";
-  if (dbMatch.on_chain_match_id && contractServiceInstance?.isContractAvailable()) {
-    const pools = await contractServiceInstance.getPools(dbMatch.on_chain_match_id);
+  if (
+    dbMatch.on_chain_match_id &&
+    contractServiceInstance?.isContractAvailable()
+  ) {
+    const pools = await contractServiceInstance.getPools(
+      dbMatch.on_chain_match_id
+    );
     const totalPool = pools ? formatEth(pools.total) : "?";
     poolInfo = `\n💰 Total Pool: ${totalPool} ETH\n\nWinners can now claim using \`/claim\``;
   }
@@ -659,10 +743,7 @@ async function postMatchResult(
 /**
  * Resolve a match from API data
  */
-async function resolveMatchFromAPI(
-  dbMatch: any,
-  apiMatch: any
-): Promise<void> {
+async function resolveMatchFromAPI(dbMatch: any, apiMatch: any): Promise<void> {
   const homeScore = apiMatch.score.fullTime.home;
   const awayScore = apiMatch.score.fullTime.away;
 

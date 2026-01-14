@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: matchday-bet-bot
+    runtime: docker
+    repo: https://github.com/yourusername/yourrepo # Update with your GitHub repo URL
+    branch: main
+    region: oregon # Change to your preferred region
+    plan: starter # $7/month plan (required for persistent disk)
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./matchday_bet_bot
+
+    # Health check configuration
+    healthCheckPath: /health
+
+    # Environment variables
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5123
+      - key: DATABASE_PATH
+        value: /data/matchday.db
+      - key: APP_PRIVATE_DATA
+        sync: false # Set this in Render dashboard (sensitive)
+      - key: JWT_SECRET
+        sync: false # Set this in Render dashboard (sensitive)
+      - key: FOOTBALL_API_KEY
+        sync: false # Set this in Render dashboard (sensitive)
+      - key: CONTRACT_ADDRESS
+        sync: false # Set this in Render dashboard
+      - key: BASE_RPC_URL
+        value: https://mainnet.base.org
+      - key: MIN_STAKE
+        value: 0.001
+      - key: MAX_STAKE
+        value: 0.1
+      - key: SUPPORTED_COMPETITIONS
+        value: 2021,2014,2002,2019,2015,2001
+      - key: DEFAULT_CHANNEL_ID
+        sync: false # Optional: Set in Render dashboard for automated announcements
+      - key: ADMIN_USER_ID
+        sync: false # Optional: Set in Render dashboard
+      - key: SUBGRAPH_URL
+        value: https://api.studio.thegraph.com/query/122239/matchdaybet-v-2/v0.1
+
+    # Persistent disk for SQLite database
+    disk:
+      name: matchday-data
+      mountPath: /data
+      sizeGB: 1 # 1GB is sufficient for SQLite database ($0.25/month)
+
+    # Build command (if using Dockerfile)
+    # Bun installation and dependency installation handled in Dockerfile
+
+    # Start command
+    startCommand: bun run start
+
+    # Auto-deploy on git push
+    autoDeploy: true

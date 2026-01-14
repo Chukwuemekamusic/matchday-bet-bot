@@ -75,12 +75,17 @@ class FootballAPIService {
 
           if (validMatches.length !== response.matches.length) {
             console.warn(
-              `⚠️ Competition ${competitionId}: ${response.matches.length - validMatches.length} invalid matches filtered out`
+              `⚠️ Competition ${competitionId}: ${
+                response.matches.length - validMatches.length
+              } invalid matches filtered out`
             );
           }
         } catch (error) {
           // Log error for individual competition but continue with others
-          console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
+          console.warn(
+            `Failed to fetch matches for competition ${competitionId}:`,
+            error
+          );
         }
       }
 
@@ -129,12 +134,17 @@ class FootballAPIService {
 
           if (validMatches.length !== response.matches.length) {
             console.warn(
-              `⚠️ Competition ${competitionId}: ${response.matches.length - validMatches.length} invalid matches filtered out`
+              `⚠️ Competition ${competitionId}: ${
+                response.matches.length - validMatches.length
+              } invalid matches filtered out`
             );
           }
         } catch (error) {
           // Log error for individual competition but continue with others
-          console.warn(`Failed to fetch matches for competition ${competitionId}:`, error);
+          console.warn(
+            `Failed to fetch matches for competition ${competitionId}:`,
+            error
+          );
         }
       }
 
@@ -275,12 +285,12 @@ class FootballAPIService {
     }
 
     if (updated > 0) {
-      console.log(`✅ Updated ${updated} unresolved match(es) from previous days`);
+      console.log(
+        `✅ Updated ${updated} unresolved match(es) from previous days`
+      );
     }
     if (errors > 0) {
-      console.warn(
-        `⚠️ Failed to update ${errors} match(es) due to API errors`
-      );
+      console.warn(`⚠️ Failed to update ${errors} match(es) due to API errors`);
     }
 
     return { updated, errors };

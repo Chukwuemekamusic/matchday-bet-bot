@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import config from "../config";
 import { DBMatch, PendingBet, UserStats, Outcome } from "../types";
+import { FootballAPIService } from "../services/footballApi";
 
 class DatabaseService {
   private db: Database;
@@ -144,9 +145,7 @@ class DatabaseService {
 
     try {
       this.db.exec(`ALTER TABLE pending_bets ADD COLUMN thread_id TEXT`);
-      console.log(
-        "✅ Migration: Added thread_id column to pending_bets table"
-      );
+      console.log("✅ Migration: Added thread_id column to pending_bets table");
     } catch (error) {
       // Column already exists
     }
@@ -205,12 +204,24 @@ class DatabaseService {
 
     if (existing) {
       // Update existing match (don't change daily_id or match_code)
+      let result = existing.result;
+      if (
+        match.status === "FINISHED" &&
+        match.home_score !== null &&
+        match.away_score !== null
+      ) {
+        result = FootballAPIService.determineOutcome(
+          match.home_score,
+          match.away_score
+        );
+      }
       const updateStmt = this.db.prepare(`
         UPDATE matches
         SET status = ?,
             home_score = ?,
             away_score = ?,
-            kickoff_time = ?
+            kickoff_time = ?,
+            result = ?
         WHERE api_match_id = ?
       `);
       updateStmt.run(
@@ -218,6 +229,7 @@ class DatabaseService {
         match.home_score,
         match.away_score,
         match.kickoff_time,
+        result,
         match.api_match_id
       );
       return existing.id;
