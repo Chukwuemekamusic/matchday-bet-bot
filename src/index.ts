@@ -22,6 +22,7 @@ import { Outcome, DBMatch, ContractBet } from "./types";
 import { config } from "./config";
 import { startScheduler } from "./scheduler";
 import { getLinkedWallets } from "./utils/wallet";
+import { getThreadMessageOpts } from "./utils/threadRouter";
 
 const bot = await makeTownsBot(
   process.env.APP_PRIVATE_DATA!,
@@ -230,7 +231,9 @@ ${
 });
 
 // /bet - Place a bet (step 1: create pending bet)
-bot.onSlashCommand("bet", async (handler, { channelId, args, userId }) => {
+bot.onSlashCommand("bet", async (handler, { channelId, args, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
+
   try {
     console.log("═══════════════════════════════════════════════════════");
     console.log("🎯 /BET COMMAND HANDLER INVOKED");
@@ -260,7 +263,8 @@ bot.onSlashCommand("bet", async (handler, { channelId, args, userId }) => {
       await handler.sendMessage(
         channelId,
         `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
-Example: \`/bet 1 home 0.01\``
+Example: \`/bet 1 home 0.01\``,
+        opts
       );
       return;
     }
@@ -276,7 +280,8 @@ Example: \`/bet 1 home 0.01\``
       console.log("❌ Invalid match number");
       await handler.sendMessage(
         channelId,
-        "❌ Invalid match number. Use `/matches` to see available matches."
+        "❌ Invalid match number. Use `/matches` to see available matches.",
+        opts
       );
       return;
     }
@@ -291,7 +296,8 @@ Example: \`/bet 1 home 0.01\``
     if (!match) {
       await handler.sendMessage(
         channelId,
-        `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
+        `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`,
+        opts
       );
       return;
     }
@@ -308,7 +314,8 @@ Example: \`/bet 1 home 0.01\``
     if (!bettingOpen) {
       await handler.sendMessage(
         channelId,
-        "❌ Betting is closed for this match. Kickoff has passed."
+        "❌ Betting is closed for this match. Kickoff has passed.",
+        opts
       );
       return;
     }
@@ -320,7 +327,8 @@ Example: \`/bet 1 home 0.01\``
     if (prediction === null) {
       await handler.sendMessage(
         channelId,
-        "❌ Invalid prediction. Use: home, draw, or away"
+        "❌ Invalid prediction. Use: home, draw, or away",
+        opts
       );
       return;
     }
@@ -334,7 +342,8 @@ Example: \`/bet 1 home 0.01\``
       console.log("❌ Failed to parse amount:", error);
       await handler.sendMessage(
         channelId,
-        "❌ Invalid amount. Enter a number like 0.01"
+        "❌ Invalid amount. Enter a number like 0.01",
+        opts
       );
       return;
     }
@@ -345,7 +354,8 @@ Example: \`/bet 1 home 0.01\``
     if (amount < minStake) {
       await handler.sendMessage(
         channelId,
-        `❌ Minimum bet is ${config.betting.minStake} ETH`
+        `❌ Minimum bet is ${config.betting.minStake} ETH`,
+        opts
       );
       return;
     }
@@ -353,7 +363,8 @@ Example: \`/bet 1 home 0.01\``
     if (amount > maxStake) {
       await handler.sendMessage(
         channelId,
-        `❌ Maximum bet is ${config.betting.maxStake} ETH`
+        `❌ Maximum bet is ${config.betting.maxStake} ETH`,
+        opts
       );
       return;
     }
@@ -366,7 +377,8 @@ Example: \`/bet 1 home 0.01\``
         `❌ You've already placed a bet on this match with wallet ${truncateAddress(
           existingBet.wallet_address
         )}
-        \n\nNote: You can only bet once per match. Use "/mybets" to view your active bets.`
+        \n\nNote: You can only bet once per match. Use "/mybets" to view your active bets.`,
+        opts
       );
       return;
     }
@@ -452,7 +464,8 @@ _This pending bet expires in 5 minutes._`;
             ],
           },
         } as any, // Type assertion for complex protobuf types
-        hexToBytes(userId as `0x${string}`) // recipient
+        hexToBytes(userId as `0x${string}`), // recipient
+        opts // threading options
       );
 
       console.log("✅ Interaction request sent successfully");
@@ -471,7 +484,8 @@ _This pending bet expires in 5 minutes._`;
 
 ❌ Interactive buttons are not working. Please check the error logs or try again later.
 
-_This pending bet expires in 5 minutes._`
+_This pending bet expires in 5 minutes._`,
+        opts
       );
     }
   } catch (error) {
@@ -481,7 +495,8 @@ _This pending bet expires in 5 minutes._`
     try {
       await handler.sendMessage(
         channelId,
-        "❌ An unexpected error occurred. Please try again or contact support."
+        "❌ An unexpected error occurred. Please try again or contact support.",
+        opts
       );
     } catch (msgError) {
       console.error("❌ Failed to send error message:", msgError);
@@ -490,13 +505,15 @@ _This pending bet expires in 5 minutes._`
 });
 
 // /pending - Check pending bet status
-bot.onSlashCommand("pending", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("pending", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
   const pending = db.getPendingBet(userId);
 
   if (!pending) {
     await handler.sendMessage(
       channelId,
-      "ℹ️ You don't have any pending bets.\n\nUse `/bet` to place a new bet!"
+      "ℹ️ You don't have any pending bets.\n\nUse `/bet` to place a new bet!",
+      opts
     );
     return;
   }
@@ -505,7 +522,8 @@ bot.onSlashCommand("pending", async (handler, { channelId, userId }) => {
   if (!match) {
     await handler.sendMessage(
       channelId,
-      "❌ Your pending bet references a match that no longer exists."
+      "❌ Your pending bet references a match that no longer exists.",
+      opts
     );
     db.clearPendingBet(userId);
     return;
@@ -530,24 +548,26 @@ bot.onSlashCommand("pending", async (handler, { channelId, userId }) => {
 To complete your bet, click the "Confirm & Sign" button in the message above.
 To cancel, use \`/cancel\`.`;
 
-  await handler.sendMessage(channelId, message);
+  await handler.sendMessage(channelId, message, opts);
 });
 
 // /cancel - Cancel pending bet
-bot.onSlashCommand("cancel", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("cancel", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
   const pending = db.getPendingBet(userId);
 
   if (!pending) {
-    await handler.sendMessage(channelId, "❌ No pending bet to cancel.");
+    await handler.sendMessage(channelId, "❌ No pending bet to cancel.", opts);
     return;
   }
 
   db.clearPendingBet(userId);
-  await handler.sendMessage(channelId, "✅ Pending bet cancelled.");
+  await handler.sendMessage(channelId, "✅ Pending bet cancelled.", opts);
 });
 
 // /mybets - Show user's bets
-bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("mybets", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
   console.log(`[/mybets] Fetching bets for user ${userId}`);
 
   // Get all user's bets from DB
@@ -556,7 +576,8 @@ bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
   if (userBets.length === 0) {
     await handler.sendMessage(
       channelId,
-      "📋 **My Bets**\n\nYou don't have any active bets.\n\nUse `/matches` to browse available matches and place a bet!"
+      "📋 **My Bets**\n\nYou don't have any active bets.\n\nUse `/matches` to browse available matches and place a bet!",
+      opts
     );
     return;
   }
@@ -712,7 +733,7 @@ bot.onSlashCommand("mybets", async (handler, { channelId, userId }) => {
     betsByWallet.size
   } wallet${betsByWallet.size !== 1 ? "s" : ""}`;
 
-  await handler.sendMessage(channelId, message);
+  await handler.sendMessage(channelId, message, opts);
 });
 
 // /verify - Verify and sync bets with on-chain state
@@ -894,7 +915,9 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
 });
 
 // /claim - Claim winnings
-bot.onSlashCommand("claim", async (handler, { channelId, args, userId }) => {
+bot.onSlashCommand("claim", async (handler, { channelId, args, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
+
   try {
     // Check if contract is available
     if (!contractService.isContractAvailable()) {
@@ -1197,7 +1220,8 @@ Ready to claim your winnings?`;
           ],
         },
       } as any,
-      hexToBytes(userId as `0x${string}`)
+      hexToBytes(userId as `0x${string}`),
+      opts // threading options
     );
 
     // Store claim context in a temporary table/map
@@ -1215,7 +1239,9 @@ Ready to claim your winnings?`;
 // /claim_refund - Claim refund from a cancelled match
 bot.onSlashCommand(
   "claim_refund",
-  async (handler, { channelId, args, userId }) => {
+  async (handler, { channelId, args, userId, eventId, threadId }) => {
+    const opts = getThreadMessageOpts(threadId, eventId);
+
     try {
       // Check if contract is available
       if (!contractService.isContractAvailable()) {
@@ -1421,7 +1447,8 @@ Ready to claim your refund?`;
             ],
           },
         } as any,
-        hexToBytes(userId as `0x${string}`)
+        hexToBytes(userId as `0x${string}`),
+        opts // threading options
       );
     } catch (error) {
       console.error("Error in /claim_refund command:", error);

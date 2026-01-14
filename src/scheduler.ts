@@ -293,9 +293,21 @@ async function morningFetch(): Promise<void> {
     // Update scheduler state and setup intelligent polling
     schedulerState.todaysMatches = matches.length;
 
-    if (matches.length === 0) {
-      console.log("📅 No matches today. Sleeping until tomorrow.");
+    // Check for unresolved matches from previous days
+    const unresolvedMatches = db.getUnresolvedOnChainMatches(48);
+
+    if (matches.length === 0 && unresolvedMatches.length === 0) {
+      console.log("📅 No matches today and no unresolved matches. Sleeping until tomorrow.");
       stopResultsPolling(); // Ensure polling is stopped
+      return;
+    }
+
+    if (matches.length === 0 && unresolvedMatches.length > 0) {
+      console.log(
+        `📅 No matches today, but ${unresolvedMatches.length} unresolved match(es) from previous days need checking`
+      );
+      // Start polling to resolve yesterday's matches
+      startResultsPolling();
       return;
     }
 
@@ -476,6 +488,10 @@ async function pollMatchResults(): Promise<void> {
   // Fetch all today's matches in one API call (more efficient)
   try {
     const apiMatches = await footballApi.getTodaysMatches();
+
+    // Also fetch updates for unresolved matches from previous days
+    await footballApi.fetchUnresolvedMatchUpdates();
+
     const matchesToResolve: Array<{ dbMatch: any; apiMatch: any; outcome: number }> = [];
 
     // First pass: collect all finished matches

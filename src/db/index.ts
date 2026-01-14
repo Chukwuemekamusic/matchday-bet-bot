@@ -434,6 +434,29 @@ class DatabaseService {
   }
 
   /**
+   * Get unresolved on-chain matches (for cross-day polling)
+   * Optionally filters out matches older than maxAgeHours
+   */
+  getUnresolvedOnChainMatches(maxAgeHours?: number): DBMatch[] {
+    let query = `
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+        AND status NOT IN ('FINISHED', 'CANCELLED', 'POSTPONED')
+        AND result IS NULL
+    `;
+
+    if (maxAgeHours) {
+      const cutoffTime = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
+      query += ` AND kickoff_time >= ${cutoffTime}`;
+    }
+
+    query += ` ORDER BY kickoff_time DESC`;
+
+    const stmt = this.db.prepare(query);
+    return stmt.all() as DBMatch[];
+  }
+
+  /**
    * Get kickoff time range for today's matches
    * Returns { firstKickoff, lastKickoff } in Unix timestamp (seconds)
    * Returns null if no matches
