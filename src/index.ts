@@ -383,8 +383,8 @@ Example: \`/bet 1 home 0.01\``,
       return;
     }
 
-    // Create pending bet
-    db.createPendingBet(userId, match.id, prediction, amountStr);
+    // Create pending bet (store threadId for later use in interaction responses)
+    db.createPendingBet(userId, match.id, prediction, amountStr, eventId);
 
     const predictionDisplay =
       prediction === Outcome.HOME
@@ -737,7 +737,9 @@ bot.onSlashCommand("mybets", async (handler, { channelId, userId, eventId, threa
 });
 
 // /verify - Verify and sync bets with on-chain state
-bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("verify", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
+
   try {
     console.log(`[/verify] Starting verification for user ${userId}`);
 
@@ -745,7 +747,8 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
     if (!contractService.isContractAvailable()) {
       await handler.sendMessage(
         channelId,
-        "❌ Smart contract is not yet deployed. Verification unavailable."
+        "❌ Smart contract is not yet deployed. Verification unavailable.",
+        opts
       );
       return;
     }
@@ -753,7 +756,8 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
     // Send initial message
     await handler.sendMessage(
       channelId,
-      "🔍 **Verifying Your Bets...**\n\nChecking on-chain state, please wait..."
+      "🔍 **Verifying Your Bets...**\n\nChecking on-chain state, please wait...",
+      opts
     );
 
     // Get user's smart account address
@@ -764,7 +768,8 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
     if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        "❌ Couldn't retrieve your wallet address. Please try again."
+        "❌ Couldn't retrieve your wallet address. Please try again.",
+        opts
       );
       return;
     }
@@ -786,7 +791,8 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
     if (allMatches.size === 0) {
       await handler.sendMessage(
         channelId,
-        "📭 **No Matches Found**\n\nNo on-chain matches available to verify."
+        "📭 **No Matches Found**\n\nNo on-chain matches available to verify.",
+        opts
       );
       return;
     }
@@ -903,13 +909,14 @@ bot.onSlashCommand("verify", async (handler, { channelId, userId }) => {
       message += `Run \`/mybets\` to check.`;
     }
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
     console.log(`[/verify] Verification complete for ${userId}`);
   } catch (error) {
     console.error("[/verify] Error during verification:", error);
     await handler.sendMessage(
       channelId,
-      "❌ **Verification Failed**\n\nAn error occurred while verifying your bets. Please try again or contact support."
+      "❌ **Verification Failed**\n\nAn error occurred while verifying your bets. Please try again or contact support.",
+      opts
     );
   }
 });
@@ -923,7 +930,8 @@ bot.onSlashCommand("claim", async (handler, { channelId, args, userId, eventId, 
     if (!contractService.isContractAvailable()) {
       await handler.sendMessage(
         channelId,
-        "❌ Smart contract is not yet deployed. Please contact the admin."
+        "❌ Smart contract is not yet deployed. Please contact the admin.",
+        opts
       );
       return;
     }
@@ -936,7 +944,8 @@ bot.onSlashCommand("claim", async (handler, { channelId, args, userId, eventId, 
 
 Example: \`/claim 1\`
 
-Use \`/claimable\` to see all your unclaimed winnings.`
+Use \`/claimable\` to see all your unclaimed winnings.`,
+        opts
       );
       return;
     }
@@ -954,7 +963,8 @@ Use \`/claimable\` to see all your unclaimed winnings.`
           channelId,
           `❌ Match \`${input}\` not found.
 
-Use \`/claimable\` to see all claimable matches.`
+Use \`/claimable\` to see all claimable matches.`,
+          opts
         );
         return;
       }
@@ -965,7 +975,8 @@ Use \`/claimable\` to see all claimable matches.`
       if (isNaN(matchNum) || matchNum < 1) {
         await handler.sendMessage(
           channelId,
-          "❌ Invalid match number. Use `/claimable` to see available matches."
+          "❌ Invalid match number. Use `/claimable` to see available matches.",
+          opts
         );
         return;
       }
@@ -988,7 +999,8 @@ Use \`/claimable\` to see all claimable matches.`
 **Looking for an older match?**
 Try: \`/claim ${todayCode}\` for match #${matchNum} from another day
 
-Or run \`/claimable\` to see all your claimable matches.`
+Or run \`/claimable\` to see all your claimable matches.`,
+          opts
         );
         return;
       }
@@ -998,7 +1010,8 @@ Or run \`/claimable\` to see all your claimable matches.`
     if (!match.on_chain_match_id) {
       await handler.sendMessage(
         channelId,
-        `❌ This match hasn't been created on-chain yet. No bets have been placed.`
+        `❌ This match hasn't been created on-chain yet. No bets have been placed.`,
+        opts
       );
       return;
     }
@@ -1012,7 +1025,8 @@ Or run \`/claimable\` to see all your claimable matches.`
 **${match.home_team} vs ${match.away_team}**
 Status: ${match.status}
 
-You can claim once the match is finished and resolved.`
+You can claim once the match is finished and resolved.`,
+        opts
       );
       return;
     }
@@ -1027,7 +1041,8 @@ You can claim once the match is finished and resolved.`
 
 **${match.home_team} vs ${match.away_team}**
 
-Use \`/claimable\` to see matches you can claim from.`
+Use \`/claimable\` to see matches you can claim from.`,
+        opts
       );
       return;
     }
@@ -1040,7 +1055,8 @@ Use \`/claimable\` to see matches you can claim from.`
     if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        `❌ Couldn't retrieve your wallet address. Please try again or contact support.`
+        `❌ Couldn't retrieve your wallet address. Please try again or contact support.`,
+        opts
       );
       return;
     }
@@ -1066,7 +1082,8 @@ Use \`/claimable\` to see matches you can claim from.`
 Your Prediction: ${userPrediction}
 Result: ${actualResult}
 
-Better luck next time!`
+Better luck next time!`,
+          opts
         );
         return;
       }
@@ -1079,7 +1096,8 @@ Better luck next time!`
             ? "Reason: " +
               (claimStatus.claimType === 0 ? "Not eligible" : "Unknown")
             : "Please contact support."
-        }`
+        }`,
+        opts
       );
       return;
     }
@@ -1090,7 +1108,8 @@ Better luck next time!`
         channelId,
         `❌ This match requires a refund claim, not a winnings claim.
 
-Use \`/claim_refund ${match.match_code || match.id}\` instead.`
+Use \`/claim_refund ${match.match_code || match.id}\` instead.`,
+        opts
       );
       return;
     }
@@ -1103,7 +1122,8 @@ Use \`/claim_refund ${match.match_code || match.id}\` instead.`
 
 **${match.home_team} vs ${match.away_team}**
 
-Use \`/stats\` to see your total winnings.`
+Use \`/stats\` to see your total winnings.`,
+        opts
       );
       return;
     }
@@ -1119,7 +1139,8 @@ Use \`/stats\` to see your total winnings.`
         channelId,
         `❌ Couldn't find your bet on-chain. Please contact support.
 
-Wallet: ${truncateAddress(walletAddress)}`
+Wallet: ${truncateAddress(walletAddress)}`,
+        opts
       );
       return;
     }
@@ -1135,7 +1156,8 @@ Wallet: ${truncateAddress(walletAddress)}`
 
 **${match.home_team} vs ${match.away_team}**
 
-Use \`/stats\` to see your total winnings.`
+Use \`/stats\` to see your total winnings.`,
+        opts
       );
       return;
     }
@@ -1148,13 +1170,14 @@ Use \`/stats\` to see your total winnings.`
         channelId,
         `⚠️ Winnings calculation returned 0 ETH. This might be a pool issue. Please contact support.
 
-**${match.home_team} vs ${match.away_team}**`
+**${match.home_team} vs ${match.away_team}**`,
+        opts
       );
       return;
     }
 
-    // Create interaction for claiming
-    const interactionId = `claim-${match.id}-${userId}-${Date.now()}`;
+    // Create interaction for claiming (encode threadId for later retrieval)
+    const interactionId = `claim-${match.id}-${userId.slice(0, 8)}-${eventId}`;
     const stakeAmount = BigInt(onChainBet.amount);
     const profit = potentialWinnings - stakeAmount;
 
@@ -1231,7 +1254,8 @@ Ready to claim your winnings?`;
     console.error("Error in /claim command:", error);
     await handler.sendMessage(
       channelId,
-      "❌ An error occurred while processing your claim. Please try again or contact support."
+      "❌ An error occurred while processing your claim. Please try again or contact support.",
+      opts
     );
   }
 });
@@ -1247,7 +1271,8 @@ bot.onSlashCommand(
       if (!contractService.isContractAvailable()) {
         await handler.sendMessage(
           channelId,
-          "❌ Smart contract is not yet deployed. Please contact the admin."
+          "❌ Smart contract is not yet deployed. Please contact the admin.",
+          opts
         );
         return;
       }
@@ -1264,7 +1289,8 @@ bot.onSlashCommand(
   • \`/claim_refund 1\` — Match #1 from today
   • \`/claim_refund 20260108-2\` — Match using match code
 
-Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.`
+Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.`,
+          opts
         );
         return;
       }
@@ -1280,7 +1306,8 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
         if (!match) {
           await handler.sendMessage(
             channelId,
-            `❌ Match \`${input}\` not found.\n\nUse \`/matches\` to see available matches.`
+            `❌ Match \`${input}\` not found.\n\nUse \`/matches\` to see available matches.`,
+            opts
           );
           return;
         }
@@ -1291,7 +1318,8 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
         if (isNaN(matchNum) || matchNum < 1) {
           await handler.sendMessage(
             channelId,
-            "❌ Invalid match number. Use `/matches` to see available matches."
+            "❌ Invalid match number. Use `/matches` to see available matches.",
+            opts
           );
           return;
         }
@@ -1309,7 +1337,8 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
 
           await handler.sendMessage(
             channelId,
-            `❌ Match #${matchNum} not found for today.\n\n**Looking for an older match?**\nTry: \`/claim_refund ${todayCode}\` for match #${matchNum} from another day\n\nOr use \`/mybets\` to see your bets with match codes.`
+            `❌ Match #${matchNum} not found for today.\n\n**Looking for an older match?**\nTry: \`/claim_refund ${todayCode}\` for match #${matchNum} from another day\n\nOr use \`/mybets\` to see your bets with match codes.`,
+            opts
           );
           return;
         }
@@ -1319,7 +1348,8 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
       if (!match.on_chain_match_id) {
         await handler.sendMessage(
           channelId,
-          `❌ This match hasn't been created on-chain yet. No bets have been placed.`
+          `❌ This match hasn't been created on-chain yet. No bets have been placed.`,
+          opts
         );
         return;
       }
@@ -1332,7 +1362,8 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
       if (!walletAddress) {
         await handler.sendMessage(
           channelId,
-          `❌ Couldn't retrieve your wallet address. Please try again or contact support.`
+          `❌ Couldn't retrieve your wallet address. Please try again or contact support.`,
+          opts
         );
         return;
       }
@@ -1367,7 +1398,7 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
           }
         }
 
-        await handler.sendMessage(channelId, message);
+        await handler.sendMessage(channelId, message, opts);
         return;
       }
 
@@ -1382,13 +1413,14 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
           channelId,
           `❌ Couldn't find your bet on-chain. Please contact support.
 
-Wallet: ${truncateAddress(walletAddress)}`
+Wallet: ${truncateAddress(walletAddress)}`,
+          opts
         );
         return;
       }
 
-      // Create interaction for claiming refund
-      const interactionId = `claim_refund-${match.id}-${userId}-${Date.now()}`;
+      // Create interaction for claiming refund (encode threadId for later retrieval)
+      const interactionId = `claim_refund-${match.id}-${userId.slice(0, 8)}-${eventId}`;
       const refundAmount = BigInt(onChainBet.amount);
 
       // Determine status display and reason
@@ -1454,20 +1486,23 @@ Ready to claim your refund?`;
       console.error("Error in /claim_refund command:", error);
       await handler.sendMessage(
         channelId,
-        "❌ An error occurred while processing your refund claim. Please try again or contact support."
+        "❌ An error occurred while processing your refund claim. Please try again or contact support.",
+        opts
       );
     }
   }
 );
 
 // /claimable - List all unclaimed winnings
-bot.onSlashCommand("claimable", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("claimable", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
   try {
     // Check if contract is available
     if (!contractService.isContractAvailable()) {
       await handler.sendMessage(
         channelId,
-        "❌ Smart contract is not yet deployed. Please contact the admin."
+        "❌ Smart contract is not yet deployed. Please contact the admin.",
+        opts
       );
       return;
     }
@@ -1480,7 +1515,8 @@ bot.onSlashCommand("claimable", async (handler, { channelId, userId }) => {
     if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        "❌ Couldn't retrieve your wallet address. Please try again."
+        "❌ Couldn't retrieve your wallet address. Please try again.",
+        opts
       );
       return;
     }
@@ -1497,7 +1533,8 @@ bot.onSlashCommand("claimable", async (handler, { channelId, userId }) => {
 
 You don't have any unclaimed winnings or refunds at the moment.
 
-Use \`/matches\` to see today's matches and place new bets!`
+Use \`/matches\` to see today's matches and place new bets!`,
+        opts
       );
       return;
     }
@@ -1557,24 +1594,27 @@ Use \`/matches\` to see today's matches and place new bets!`
       }
     }
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
   } catch (error) {
     console.error("Error in /claimable command:", error);
     await handler.sendMessage(
       channelId,
-      "❌ An error occurred while fetching your claimable matches. Please try again or contact support."
+      "❌ An error occurred while fetching your claimable matches. Please try again or contact support.",
+      opts
     );
   }
 });
 
 // /claim_all - Claim all unclaimed winnings (sends individual transactions for each match)
-bot.onSlashCommand("claim_all", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("claim_all", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
   try {
     // Check if contract is available
     if (!contractService.isContractAvailable()) {
       await handler.sendMessage(
         channelId,
-        "❌ Smart contract is not yet deployed. Please contact the admin."
+        "❌ Smart contract is not yet deployed. Please contact the admin.",
+        opts
       );
       return;
     }
@@ -1589,7 +1629,8 @@ bot.onSlashCommand("claim_all", async (handler, { channelId, userId }) => {
 
 You don't have any unclaimed winnings at the moment.
 
-Use \`/matches\` to see today's matches and place new bets!`
+Use \`/matches\` to see today's matches and place new bets!`,
+        opts
       );
       return;
     }
@@ -1602,7 +1643,8 @@ Use \`/matches\` to see today's matches and place new bets!`
     if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        "❌ Couldn't retrieve your wallet address. Please try again."
+        "❌ Couldn't retrieve your wallet address. Please try again.",
+        opts
       );
       return;
     }
@@ -1645,7 +1687,8 @@ Use \`/matches\` to see today's matches and place new bets!`
 
 All your winnings may have already been claimed.
 
-Use \`/stats\` to see your betting history.`
+Use \`/stats\` to see your betting history.`,
+        opts
       );
       return;
     }
@@ -1670,7 +1713,7 @@ Use \`/stats\` to see your betting history.`
     message += `• React with 👍 below to proceed with claiming all\n\n`;
     message += `_Batch claiming in a single transaction is coming soon!_`;
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
 
     // Note: Full implementation would listen for reaction and send all transactions
     // For now, user should use /claim individually or we can add confirmation flow
@@ -1678,13 +1721,16 @@ Use \`/stats\` to see your betting history.`
     console.error("Error in /claim_all command:", error);
     await handler.sendMessage(
       channelId,
-      "❌ An error occurred while processing your claim request. Please try again or contact support."
+      "❌ An error occurred while processing your claim request. Please try again or contact support.",
+      opts
     );
   }
 });
 
 // /stats - Show user stats
-bot.onSlashCommand("stats", async (handler, { channelId, userId }) => {
+bot.onSlashCommand("stats", async (handler, { channelId, userId, eventId, threadId }) => {
+  const opts = getThreadMessageOpts(threadId, eventId);
+
   try {
     // Get wallet address
     const walletAddress = await getSmartAccountFromUserId(bot, {
@@ -1694,7 +1740,8 @@ bot.onSlashCommand("stats", async (handler, { channelId, userId }) => {
     if (!walletAddress) {
       await handler.sendMessage(
         channelId,
-        "❌ Couldn't retrieve your wallet address. Please try again."
+        "❌ Couldn't retrieve your wallet address. Please try again.",
+        opts
       );
       return;
     }
@@ -1709,7 +1756,8 @@ bot.onSlashCommand("stats", async (handler, { channelId, userId }) => {
 
 You haven't placed any bets yet!
 
-Use \`/matches\` to see today's matches and start betting.`
+Use \`/matches\` to see today's matches and start betting.`,
+        opts
       );
       return;
     }
@@ -1746,12 +1794,13 @@ Use \`/matches\` to see today's matches and start betting.`
 • Total Claimed: ${formatEther(BigInt(stats.totalClaimed))} ETH
 • ${profitEmoji} Profit: ${profitNum.toFixed(4)} ETH`;
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
   } catch (error) {
     console.error("Error in /stats command:", error);
     await handler.sendMessage(
       channelId,
-      "❌ An error occurred while fetching your stats. Please try again or contact support."
+      "❌ An error occurred while fetching your stats. Please try again or contact support.",
+      opts
     );
   }
 });
@@ -2275,23 +2324,43 @@ bot.onInteractionResponse(async (handler, event) => {
     const form = response.payload.content.value;
     const requestId = form.requestId;
 
-    // Check if this is a claim interaction (starts with "claim-")
+    // Check if this is a claim interaction (starts with "claim-" or "claim_refund-")
     // Claim interactions are NOT stored in pending_bets, so skip that check
-    const isClaimInteraction = requestId.startsWith("claim-");
+    const isClaimInteraction = requestId.startsWith("claim-") || requestId.startsWith("claim_refund-");
+
+    // Retrieve threadId for threading responses (before checking pending bet)
+    let threadId: string | undefined;
+    let pendingBet = null;
 
     // Only check pending_bets for bet confirmations (not claims)
-    let pendingBet = null;
     if (!isClaimInteraction) {
       // Find the pending bet for this interaction
       pendingBet = db.getPendingBetByInteractionId(requestId);
 
-      if (!pendingBet) {
-        await handler.sendMessage(
-          channelId,
-          "❌ Bet expired or already processed. Please place a new bet with `/bet`."
-        );
-        return;
+      // Get threadId from pending bet (if it exists)
+      if (pendingBet) {
+        threadId = pendingBet.thread_id;
       }
+    } else {
+      // For claim/claim_refund interactions, parse threadId from requestId
+      // Format: "claim-{matchId}-{userIdPrefix}-{threadId}" or "claim_refund-{matchId}-{userIdPrefix}-{threadId}"
+      const parts = requestId.split("-");
+      if (parts.length >= 4) {
+        threadId = parts[parts.length - 1]; // Last part is threadId
+      }
+    }
+
+    // Create threading opts (BEFORE any sendMessage calls)
+    const opts = threadId ? { threadId } : undefined;
+
+    // Now check if pending bet exists (for non-claim interactions)
+    if (!isClaimInteraction && !pendingBet) {
+      await handler.sendMessage(
+        channelId,
+        "❌ Bet expired or already processed. Please place a new bet with `/bet`.",
+        opts
+      );
+      return;
     }
 
     // Find which button was clicked
@@ -2303,7 +2372,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!pendingBet) {
             await handler.sendMessage(
               channelId,
-              "❌ Bet expired or already processed. Please place a new bet with `/bet`."
+              "❌ Bet expired or already processed. Please place a new bet with `/bet`.",
+              opts
             );
             return;
           }
@@ -2314,7 +2384,8 @@ bot.onInteractionResponse(async (handler, event) => {
             db.clearPendingBet(userId);
             await handler.sendMessage(
               channelId,
-              "❌ Match no longer available."
+              "❌ Match no longer available.",
+              opts
             );
             return;
           }
@@ -2324,7 +2395,8 @@ bot.onInteractionResponse(async (handler, event) => {
             db.clearPendingBet(userId);
             await handler.sendMessage(
               channelId,
-              "❌ Betting is now closed for this match."
+              "❌ Betting is now closed for this match.",
+              opts
             );
             return;
           }
@@ -2334,7 +2406,8 @@ bot.onInteractionResponse(async (handler, event) => {
             db.clearPendingBet(userId);
             await handler.sendMessage(
               channelId,
-              "❌ Smart contract is not yet deployed. Please try again once the contract is live."
+              "❌ Smart contract is not yet deployed. Please try again once the contract is live.",
+              opts
             );
             return;
           }
@@ -2379,7 +2452,7 @@ bot.onInteractionResponse(async (handler, event) => {
 
               userMessage += `\n\n_Your pending bet expires in 5 minutes. Use \`/cancel\` to cancel it._`;
 
-              await handler.sendMessage(channelId, userMessage);
+              await handler.sendMessage(channelId, userMessage, opts);
               // Don't clear pending bet - user can retry
               return;
             }
@@ -2388,7 +2461,8 @@ bot.onInteractionResponse(async (handler, event) => {
             if (!result.matchId) {
               await handler.sendMessage(
                 channelId,
-                "❌ Match creation succeeded but no match ID returned. Please contact support."
+                "❌ Match creation succeeded but no match ID returned. Please contact support.",
+                opts
               );
               return;
             }
@@ -2402,7 +2476,8 @@ bot.onInteractionResponse(async (handler, event) => {
             // Notify user that match was created
             await handler.sendMessage(
               channelId,
-              `✅ Match created on-chain! Now sending your bet transaction...`
+              `✅ Match created on-chain! Now sending your bet transaction...`,
+              opts
             );
           }
 
@@ -2410,7 +2485,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!onChainMatchId) {
             await handler.sendMessage(
               channelId,
-              "❌ Match ID not available. Please try again."
+              "❌ Match ID not available. Please try again.",
+              opts
             );
             return;
           }
@@ -2423,7 +2499,8 @@ bot.onInteractionResponse(async (handler, event) => {
 
           const amount = parseEth(pendingBet.amount);
 
-          const txId = `tx-${onChainMatchId}-${userId}-${Date.now()}`;
+          // Encode threadId in transaction ID for later retrieval
+          const txId = `tx-${onChainMatchId}-${userId.slice(0, 8)}-${threadId || 'none'}`;
 
           // Send transaction request to user
           await handler.sendInteractionRequest(
@@ -2444,12 +2521,14 @@ bot.onInteractionResponse(async (handler, event) => {
                 },
               },
             } as any, // Type assertion for complex protobuf types
-            hexToBytes(userId as `0x${string}`) // recipient
+            hexToBytes(userId as `0x${string}`), // recipient
+            opts // threading options
           );
 
           await handler.sendMessage(
             channelId,
-            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet.\n\n_I'll confirm once the transaction is mined._"
+            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet.\n\n_I'll confirm once the transaction is mined._",
+            opts
           );
 
           // Note: Bet stats will be recorded after transaction is confirmed
@@ -2483,7 +2562,7 @@ bot.onInteractionResponse(async (handler, event) => {
             checkCleared ? "❌ STILL EXISTS!" : "✅ Successfully cleared"
           );
 
-          await handler.sendMessage(channelId, "✅ Bet cancelled.");
+          await handler.sendMessage(channelId, "✅ Bet cancelled.", opts);
 
           console.log(
             "  - Cancel complete, user should be able to place new bet"
@@ -2493,12 +2572,13 @@ bot.onInteractionResponse(async (handler, event) => {
 
         // Handle claim confirm button
         if (component.id === "claim-confirm") {
-          // Parse match ID from interaction ID (format: claim-{matchId}-{userId}-{timestamp})
+          // Parse match ID from interaction ID (format: claim-{matchId}-{userIdPrefix}-{threadId})
           const parts = requestId.split("-");
           if (parts.length < 2 || parts[0] !== "claim") {
             await handler.sendMessage(
               channelId,
-              "❌ Invalid claim request. Please try again with `/claim`."
+              "❌ Invalid claim request. Please try again with `/claim`.",
+              opts
             );
             return;
           }
@@ -2509,7 +2589,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!match) {
             await handler.sendMessage(
               channelId,
-              "❌ Match no longer available."
+              "❌ Match no longer available.",
+              opts
             );
             return;
           }
@@ -2517,7 +2598,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!match.on_chain_match_id) {
             await handler.sendMessage(
               channelId,
-              "❌ Match not found on-chain."
+              "❌ Match not found on-chain.",
+              opts
             );
             return;
           }
@@ -2528,7 +2610,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!userBet) {
             await handler.sendMessage(
               channelId,
-              "❌ You don't have a bet on this match."
+              "❌ You don't have a bet on this match.",
+              opts
             );
             return;
           }
@@ -2537,7 +2620,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (userBet.claimed === 1) {
             await handler.sendMessage(
               channelId,
-              "✅ You've already claimed winnings for this match."
+              "✅ You've already claimed winnings for this match.",
+              opts
             );
             return;
           }
@@ -2547,9 +2631,10 @@ bot.onInteractionResponse(async (handler, event) => {
             match.on_chain_match_id
           );
 
+          // Encode threadId in transaction ID for later retrieval
           const txId = `claim-tx-${
             match.on_chain_match_id
-          }-${userId}-${Date.now()}`;
+          }-${userId.slice(0, 8)}-${threadId || 'none'}`;
 
           // Send transaction request to user
           await handler.sendInteractionRequest(
@@ -2570,12 +2655,14 @@ bot.onInteractionResponse(async (handler, event) => {
                 },
               },
             } as any,
-            hexToBytes(userId as `0x${string}`)
+            hexToBytes(userId as `0x${string}`),
+            opts
           );
 
           await handler.sendMessage(
             channelId,
-            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your winnings.\n\n_I'll confirm once the transaction is mined._"
+            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your winnings.\n\n_I'll confirm once the transaction is mined._",
+            opts
           );
 
           return;
@@ -2583,13 +2670,13 @@ bot.onInteractionResponse(async (handler, event) => {
 
         // Handle claim cancel button
         if (component.id === "claim-cancel") {
-          await handler.sendMessage(channelId, "✅ Claim cancelled.");
+          await handler.sendMessage(channelId, "✅ Claim cancelled.", opts);
           return;
         }
 
         // Handle refund confirm button
         if (component.id === "refund-confirm") {
-          // Parse match ID from interaction ID (format: claim_refund-{matchId}-{userId}-{timestamp})
+          // Parse match ID from interaction ID (format: claim_refund-{matchId}-{userIdPrefix}-{threadId})
           const parts = requestId.split("-");
           if (
             parts.length < 3 ||
@@ -2598,7 +2685,8 @@ bot.onInteractionResponse(async (handler, event) => {
           ) {
             await handler.sendMessage(
               channelId,
-              "❌ Invalid refund request. Please try again with `/claim_refund`."
+              "❌ Invalid refund request. Please try again with `/claim_refund`.",
+              opts
             );
             return;
           }
@@ -2609,7 +2697,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!match) {
             await handler.sendMessage(
               channelId,
-              "❌ Match no longer available."
+              "❌ Match no longer available.",
+              opts
             );
             return;
           }
@@ -2617,7 +2706,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!match.on_chain_match_id) {
             await handler.sendMessage(
               channelId,
-              "❌ Match not found on-chain."
+              "❌ Match not found on-chain.",
+              opts
             );
             return;
           }
@@ -2630,7 +2720,8 @@ bot.onInteractionResponse(async (handler, event) => {
           if (!walletAddress) {
             await handler.sendMessage(
               channelId,
-              "❌ Couldn't retrieve your wallet address. Please try again."
+              "❌ Couldn't retrieve your wallet address. Please try again.",
+              opts
             );
             return;
           }
@@ -2646,7 +2737,8 @@ bot.onInteractionResponse(async (handler, event) => {
               channelId,
               `❌ You're no longer eligible for a refund. ${
                 eligibility.reason || ""
-              }`
+              }`,
+              opts
             );
             return;
           }
@@ -2656,9 +2748,10 @@ bot.onInteractionResponse(async (handler, event) => {
             match.on_chain_match_id
           );
 
+          // Encode threadId in transaction ID for later retrieval
           const txId = `refund-tx-${
             match.on_chain_match_id
-          }-${userId}-${Date.now()}`;
+          }-${userId.slice(0, 8)}-${threadId || 'none'}`;
 
           // Send transaction request to user
           await handler.sendInteractionRequest(
@@ -2679,12 +2772,14 @@ bot.onInteractionResponse(async (handler, event) => {
                 },
               },
             } as any,
-            hexToBytes(userId as `0x${string}`)
+            hexToBytes(userId as `0x${string}`),
+            opts
           );
 
           await handler.sendMessage(
             channelId,
-            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your refund.\n\n_I'll confirm once the transaction is mined._"
+            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your refund.\n\n_I'll confirm once the transaction is mined._",
+            opts
           );
 
           return;
@@ -2692,7 +2787,7 @@ bot.onInteractionResponse(async (handler, event) => {
 
         // Handle refund cancel button
         if (component.id === "refund-cancel") {
-          await handler.sendMessage(channelId, "✅ Refund claim cancelled.");
+          await handler.sendMessage(channelId, "✅ Refund claim cancelled.", opts);
           return;
         }
       }
@@ -2702,6 +2797,19 @@ bot.onInteractionResponse(async (handler, event) => {
   // Handle transaction responses
   if (response.payload.content?.case === "transaction") {
     const txResponse = response.payload.content.value;
+
+    // Parse threadId from transaction ID for threading
+    // Transaction ID formats: "tx-{matchId}-{userIdPrefix}-{threadId}", "claim-tx-{matchId}-{userIdPrefix}-{threadId}", "refund-tx-{matchId}-{userIdPrefix}-{threadId}"
+    let threadId: string | undefined;
+    const txId = txResponse.requestId || "";
+    const parts = txId.split("-");
+    if (parts.length >= 4) {
+      const lastPart = parts[parts.length - 1];
+      if (lastPart && lastPart !== 'none') {
+        threadId = lastPart;
+      }
+    }
+    const opts = threadId ? { threadId } : undefined;
 
     if (txResponse.txHash) {
       const txHash = txResponse.txHash;
@@ -2713,7 +2821,8 @@ bot.onInteractionResponse(async (handler, event) => {
 
 Waiting for confirmation on Base...
 
-🔗 [View on Basescan](https://basescan.org/tx/${txHash})`
+🔗 [View on Basescan](https://basescan.org/tx/${txHash})`,
+        opts
       );
 
       // Wait for transaction to be mined
@@ -2813,6 +2922,7 @@ Waiting for confirmation on Base...
                           mentions: [
                             { userId, displayName: userId.slice(0, 8) },
                           ],
+                          ...(threadId && { threadId }),
                         }
                       );
 
@@ -2912,6 +3022,7 @@ Your claim was successful! Check your wallet.
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                     {
                       mentions: [{ userId, displayName: userId.slice(0, 8) }],
+                      ...(threadId && { threadId }),
                     }
                   );
 
@@ -3024,6 +3135,7 @@ Your refund was successful! Check your wallet.
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
               {
                 mentions: [{ userId, displayName: userId.slice(0, 8) }],
+                ...(threadId && { threadId }),
               }
             );
 

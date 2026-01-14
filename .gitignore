@@ -32,6 +32,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# docs
+docs/
+
 # SQLite
 *.db
 *.db-shm

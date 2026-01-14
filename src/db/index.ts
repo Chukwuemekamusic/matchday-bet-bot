@@ -142,6 +142,15 @@ class DatabaseService {
       // Column already exists
     }
 
+    try {
+      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN thread_id TEXT`);
+      console.log(
+        "✅ Migration: Added thread_id column to pending_bets table"
+      );
+    } catch (error) {
+      // Column already exists
+    }
+
     // Migrate existing databases: Add match_code column if it doesn't exist
     // This is for backward compatibility with databases created before match_code was added
     // Note: We can't add UNIQUE constraint via ALTER TABLE on existing tables with data
@@ -678,15 +687,16 @@ class DatabaseService {
     userAddress: string,
     matchId: number,
     prediction: Outcome,
-    amount: string
+    amount: string,
+    threadId?: string
   ): number {
     // Clear any existing pending bet for this user
     this.clearPendingBet(userAddress);
 
     const expiresAt = Math.floor(Date.now() / 1000) + 300; // 5 minutes
     const stmt = this.db.prepare(`
-      INSERT INTO pending_bets (user_address, match_id, prediction, amount, expires_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO pending_bets (user_address, match_id, prediction, amount, expires_at, thread_id)
+      VALUES (?, ?, ?, ?, ?, ?)
       RETURNING id
     `);
     const result = stmt.get(
@@ -694,7 +704,8 @@ class DatabaseService {
       matchId,
       prediction,
       amount,
-      expiresAt
+      expiresAt,
+      threadId || null
     ) as { id: number };
     return result.id;
   }

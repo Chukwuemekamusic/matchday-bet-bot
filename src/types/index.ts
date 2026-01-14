@@ -46,6 +46,7 @@ export interface PendingBet {
   expires_at: number;
   tx_hash?: string;
   interaction_id?: string;
+  thread_id?: string;
 }
 
 // User stats for leaderboard
