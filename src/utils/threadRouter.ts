@@ -52,3 +52,27 @@ export function getThreadMessageOpts(
   return { threadId: eventId };
 }
 
+/**
+ * Smart threading for informational commands
+ *
+ * Behavior:
+ * - If called in main channel (no threadId): Reply in main channel (no new thread)
+ * - If called in existing thread: Reply in that thread
+ *
+ * Use this for commands like /matches, /odds, /leaderboard that don't need
+ * to create new threads but should respect existing thread context.
+ *
+ * @param threadId - Current thread ID if already in a thread
+ * @returns MessageOpts for sendMessage
+ */
+export function getSmartThreadOpts(
+  threadId: string | undefined
+): MessageOpts | undefined {
+  // If in a thread, stay in it
+  if (threadId) {
+    return { threadId };
+  }
+
+  // If in main channel, don't create a thread
+  return undefined;
+}

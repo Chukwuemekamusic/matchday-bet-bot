@@ -5,11 +5,13 @@
 
 import type { CommandHandler, BaseCommandEvent } from "./types";
 import { config } from "../config";
+import { getSmartThreadOpts } from "../utils/threadRouter";
 
 export const handleHelp: CommandHandler<BaseCommandEvent> = async (
   handler,
-  { channelId }
+  { channelId, threadId }
 ) => {
+  const opts = getSmartThreadOpts(threadId);
   const message = `🎯 **MatchDay Bet Bot - Commands**
 
 **Viewing Matches:** \n\n
@@ -37,5 +39,5 @@ export const handleHelp: CommandHandler<BaseCommandEvent> = async (
 
 💰 Stakes: ${config.betting.minStake} - ${config.betting.maxStake} ETH`;
 
-  await handler.sendMessage(channelId, message);
+  await handler.sendMessage(channelId, message, opts);
 };

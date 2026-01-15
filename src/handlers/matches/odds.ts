@@ -9,6 +9,7 @@ import type {
   HandlerContext,
 } from "../types";
 import { matchLookup } from "../../services/matchLookup";
+import { getSmartThreadOpts } from "../../utils/threadRouter";
 import {
   formatEth,
   formatTime,
@@ -20,11 +21,13 @@ import {
 export const createOddsHandler = (
   context: HandlerContext
 ): CommandHandler<CommandEventWithArgs> => {
-  return async (handler, { channelId, args }) => {
+  return async (handler, { channelId, args, threadId }) => {
+    const opts = getSmartThreadOpts(threadId);
     if (args.length < 1) {
       await handler.sendMessage(
         channelId,
-        "❌ Usage: `/odds <match #>`\nExample: `/odds 1`"
+        "❌ Usage: `/odds <match #>`\nExample: `/odds 1`",
+        opts
       );
       return;
     }
@@ -33,7 +36,8 @@ export const createOddsHandler = (
     if (isNaN(matchNum) || matchNum < 1) {
       await handler.sendMessage(
         channelId,
-        "❌ Invalid match number. Use `/matches` to see available matches."
+        "❌ Invalid match number. Use `/matches` to see available matches.",
+        opts
       );
       return;
     }
@@ -41,7 +45,7 @@ export const createOddsHandler = (
     // Use match lookup service
     const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
     if (!lookupResult.success) {
-      await handler.sendMessage(channelId, lookupResult.errorMessage!);
+      await handler.sendMessage(channelId, lookupResult.errorMessage!, opts);
       return;
     }
 
@@ -62,7 +66,7 @@ ${
     ? "📊 No bets placed yet - be the first!\n\nOdds will update as bets come in."
     : "📊 Betting odds will be available once the smart contract is deployed!\n\nStay tuned for live betting action. ⚡"
 }`;
-      await handler.sendMessage(channelId, message);
+      await handler.sendMessage(channelId, message, opts);
       return;
     }
 
@@ -75,7 +79,8 @@ ${
     if (!pools || !odds) {
       await handler.sendMessage(
         channelId,
-        "❌ Failed to fetch odds. Please try again."
+        "❌ Failed to fetch odds. Please try again.",
+        opts
       );
       return;
     }
@@ -108,6 +113,6 @@ ${
     : ""
 }`;
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
   };
 };

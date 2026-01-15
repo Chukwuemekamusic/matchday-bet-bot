@@ -6,11 +6,13 @@
 import { formatEther } from "viem";
 import type { CommandHandler, BaseCommandEvent } from "../types";
 import { subgraphService } from "../../services/subgraph";
+import { getSmartThreadOpts } from "../../utils/threadRouter";
 
 export const handleLeaderboard: CommandHandler<BaseCommandEvent> = async (
   handler,
-  { channelId }
+  { channelId, threadId }
 ) => {
+  const opts = getSmartThreadOpts(threadId);
   try {
     // Get leaderboard from subgraph (with database fallback)
     const result = await subgraphService.getLeaderboard(10);
@@ -18,7 +20,8 @@ export const handleLeaderboard: CommandHandler<BaseCommandEvent> = async (
     if (result.data.length === 0) {
       await handler.sendMessage(
         channelId,
-        "🏆 No bets placed yet. Be the first on the leaderboard!"
+        "🏆 No bets placed yet. Be the first on the leaderboard!",
+        opts
       );
       return;
     }
@@ -49,13 +52,13 @@ export const handleLeaderboard: CommandHandler<BaseCommandEvent> = async (
       message += `   ${profitSign}${profitEth} ETH | ${winCount}/${totalBets} wins\n\n`;
     }
 
-    await handler.sendMessage(channelId, message);
+    await handler.sendMessage(channelId, message, opts);
   } catch (error) {
     console.error("Error in /leaderboard command:", error);
     await handler.sendMessage(
       channelId,
-      "❌ An error occurred while fetching the leaderboard. Please try again or contact support."
+      "❌ An error occurred while fetching the leaderboard. Please try again or contact support.",
+      opts
     );
   }
 };
-
