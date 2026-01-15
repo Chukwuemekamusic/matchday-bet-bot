@@ -23,6 +23,7 @@ import { config } from "./config";
 import { startScheduler } from "./scheduler";
 import { getLinkedWallets } from "./utils/wallet";
 import { getThreadMessageOpts } from "./utils/threadRouter";
+import { retryWithBackoff } from "./utils/retry";
 
 const bot = await makeTownsBot(
   process.env.APP_PRIVATE_DATA!,
@@ -40,6 +41,222 @@ console.log("  - Bot initialized successfully");
 
 // Initialize contract service with bot instance
 const contractService = new ContractService(bot);
+
+/**
+ * Attempt to auto-resolve a match if it has passed its expected finish time
+ * This helps catch matches that finished but weren't resolved yet
+ * Returns the updated match if resolution succeeded, or the original match if not
+ */
+async function tryAutoResolveMatch(match: DBMatch): Promise<DBMatch> {
+  // Only try if match is unresolved and has an on-chain ID
+  if (match.result !== null || !match.on_chain_match_id) {
+    return match;
+  }
+
+  // Don't try to resolve postponed matches - they should be cancelled instead
+  if (match.status === "POSTPONED") {
+    return match;
+  }
+
+  // Check if enough time has passed since kickoff (3 hours)
+  const now = Math.floor(Date.now() / 1000);
+  const timeSinceKickoff = now - match.kickoff_time;
+  const threeHours = 3 * 60 * 60;
+
+  if (timeSinceKickoff <= threeHours) {
+    return match; // Too soon to auto-resolve
+  }
+
+  console.log(
+    `🔄 Auto-resolve attempt for match ${match.match_code || match.id}: ${
+      match.home_team
+    } vs ${match.away_team} (Status: ${
+      match.status
+    }, Reason: 3+ hours since kickoff)`
+  );
+
+  try {
+    // Fetch latest match data from API
+    const apiMatch = await footballApi.getMatch(match.api_match_id);
+
+    // Check if match is now finished
+    if (!FootballAPIService.isFinished(apiMatch.status)) {
+      console.log(
+        `   ℹ️ Match still not finished (Status: ${apiMatch.status})`
+      );
+      return match;
+    }
+
+    // Get scores
+    const homeScore = apiMatch.score.fullTime.home;
+    const awayScore = apiMatch.score.fullTime.away;
+
+    if (homeScore === null || awayScore === null) {
+      console.log(`   ⚠️ Match finished but no scores available`);
+      return match;
+    }
+
+    // Determine outcome
+    const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
+
+    if (outcome === null) {
+      console.log(`   ❌ Could not determine outcome`);
+      return match;
+    }
+
+    // Update database
+    db.updateMatchResult(match.id, homeScore, awayScore, outcome);
+    console.log(
+      `   ✅ Database updated: ${homeScore}-${awayScore} (${Outcome[outcome]})`
+    );
+
+    // Resolve on-chain if contract is available
+    if (contractService.isContractAvailable()) {
+      const result = await contractService.resolveMatch(
+        match.on_chain_match_id,
+        outcome
+      );
+
+      if (result) {
+        console.log(
+          `   ✅ On-chain resolution successful for match ${match.on_chain_match_id}`
+        );
+      } else {
+        console.log(`   ⚠️ On-chain resolution failed, but database updated`);
+      }
+    }
+
+    // Return updated match
+    const updatedMatch = db.getMatchById(match.id);
+    if (updatedMatch) {
+      console.log(
+        `   🎉 Auto-resolution complete! Match ${
+          match.match_code || match.id
+        } is now resolved`
+      );
+      return updatedMatch;
+    }
+
+    return match;
+  } catch (error) {
+    console.error(
+      `   ❌ Auto-resolve failed for match ${match.id}:`,
+      error instanceof Error ? error.message : error
+    );
+    return match; // Return original match on error
+  }
+}
+
+/**
+ * Attempt to auto-cancel a postponed match from a past date
+ * Returns the updated match if cancellation succeeded, or the original match if not
+ */
+async function tryAutoCancelMatch(match: DBMatch): Promise<DBMatch> {
+  // Only try if match is not already cancelled and has an on-chain ID
+  if (match.status === "CANCELLED" || !match.on_chain_match_id) {
+    return match;
+  }
+
+  // Only cancel postponed matches
+  if (match.status !== "POSTPONED") {
+    return match;
+  }
+
+  // Check if match is postponed from a past date
+  let shouldCancel = false;
+
+  if (match.match_code) {
+    // Extract date from match_code (format: YYYYMMDD-N)
+    const matchDateStr = match.match_code.split("-")[0];
+    const today = new Date();
+    const todayStr = `${today.getUTCFullYear()}${String(
+      today.getUTCMonth() + 1
+    ).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
+
+    // If match is from a past date and is postponed, cancel it
+    if (matchDateStr < todayStr) {
+      shouldCancel = true;
+    }
+  }
+
+  if (!shouldCancel) {
+    return match; // Not a postponed match from past date
+  }
+
+  console.log(
+    `🚫 Auto-cancel attempt for postponed match ${
+      match.match_code || match.id
+    }: ${match.home_team} vs ${match.away_team} (Status: ${match.status})`
+  );
+
+  try {
+    // Cancel on-chain if contract is available
+    if (contractService.isContractAvailable()) {
+      // Check on-chain status first to avoid reverting
+      const onChainMatch = await contractService.getMatch(
+        match.on_chain_match_id
+      );
+
+      // If match is already cancelled or resolved on-chain, just update DB
+      if (onChainMatch) {
+        if (onChainMatch.status === 3) {
+          // Already CANCELLED
+          console.log(
+            `   ℹ️ Match ${match.on_chain_match_id} already cancelled on-chain`
+          );
+          db.updateMatchStatus(match.id, "CANCELLED");
+          const updatedMatch = db.getMatchById(match.id);
+          return updatedMatch || match;
+        }
+
+        if (onChainMatch.status === 2) {
+          // Already RESOLVED
+          console.log(
+            `   ℹ️ Match ${match.on_chain_match_id} already resolved on-chain - cannot cancel`
+          );
+          return match;
+        }
+      }
+
+      // Proceed with cancellation
+      const result = await contractService.cancelMatch(
+        match.on_chain_match_id,
+        "Match postponed - auto-cancelled"
+      );
+
+      if (result) {
+        console.log(
+          `   ✅ On-chain cancellation successful for match ${match.on_chain_match_id}`
+        );
+
+        // Update database status
+        db.updateMatchStatus(match.id, "CANCELLED");
+        console.log(`   ✅ Database updated to CANCELLED`);
+
+        // Return updated match
+        const updatedMatch = db.getMatchById(match.id);
+        if (updatedMatch) {
+          console.log(
+            `   🎉 Auto-cancellation complete! Match ${
+              match.match_code || match.id
+            } is now cancelled`
+          );
+          return updatedMatch;
+        }
+      } else {
+        console.log(`   ⚠️ On-chain cancellation failed`);
+      }
+    }
+
+    return match;
+  } catch (error) {
+    console.error(
+      `   ❌ Auto-cancel failed for match ${match.id}:`,
+      error instanceof Error ? error.message : error
+    );
+    return match; // Return original match on error
+  }
+}
 
 // /help - Show available commands
 bot.onSlashCommand("help", async (handler, { channelId }) => {
@@ -427,53 +644,66 @@ ${potentialWinnings}
 
 _This pending bet expires in 5 minutes._`;
 
-      // Send interactive message with buttons
+      // Send interactive message with buttons (with retry for network errors)
       try {
         console.log("📤 Attempting to send interaction request...");
         console.log("  - channelId:", channelId);
         console.log("  - interactionId:", interactionId);
         console.log("  - userId:", userId);
 
-        await handler.sendInteractionRequest(
-          channelId,
-          {
-            case: "form",
-            value: {
-              id: interactionId,
-              title: "Confirm Bet",
-              content: message,
-              components: [
-                {
-                  id: "confirm",
-                  component: {
-                    case: "button",
-                    value: {
-                      label: "Confirm & Sign",
-                      style: 1, // PRIMARY style
+        await retryWithBackoff(
+          async () => {
+            await handler.sendInteractionRequest(
+              channelId,
+              {
+                case: "form",
+                value: {
+                  id: interactionId,
+                  title: "Confirm Bet",
+                  content: message,
+                  components: [
+                    {
+                      id: "confirm",
+                      component: {
+                        case: "button",
+                        value: {
+                          label: "Confirm & Sign",
+                          style: 1, // PRIMARY style
+                        },
+                      },
                     },
-                  },
-                },
-                {
-                  id: "cancel",
-                  component: {
-                    case: "button",
-                    value: {
-                      label: "Cancel",
-                      style: 2, // SECONDARY style
+                    {
+                      id: "cancel",
+                      component: {
+                        case: "button",
+                        value: {
+                          label: "Cancel",
+                          style: 2, // SECONDARY style
+                        },
+                      },
                     },
-                  },
+                  ],
                 },
-              ],
-            },
-          } as any, // Type assertion for complex protobuf types
-          hexToBytes(userId as `0x${string}`), // recipient
-          opts // threading options
+              } as any, // Type assertion for complex protobuf types
+              hexToBytes(userId as `0x${string}`), // recipient
+              opts // threading options
+            );
+          },
+          3, // max retries
+          1000 // base delay (1s)
         );
 
         console.log("✅ Interaction request sent successfully");
       } catch (error) {
         console.error("❌ Failed to send interaction request:", error);
         console.error("Error details:", JSON.stringify(error, null, 2));
+
+        // Check if it's a network error
+        const isNetworkError =
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error.code === 9 || error.code === 14 || error.code === 4);
 
         // Fallback: send simple message
         await handler.sendMessage(
@@ -484,7 +714,11 @@ _This pending bet expires in 5 minutes._`;
 **Your Pick:** ${predictionDisplay}
 **Stake:** ${amountStr} ETH
 
-❌ Interactive buttons are not working. Please check the error logs or try again later.
+${
+  isNetworkError
+    ? "❌ Network error - Towns Protocol nodes are experiencing issues. Your bet is saved and will expire in 5 minutes. Please try again in a few moments."
+    : "❌ Interactive buttons are not working. Please check the error logs or try again later."
+}
 
 _This pending bet expires in 5 minutes._`,
           opts
@@ -1040,6 +1274,9 @@ Or run \`/claimable\` to see all your claimable matches.`,
         return;
       }
 
+      // Try to auto-resolve if match is unresolved but enough time has passed
+      match = await tryAutoResolveMatch(match);
+
       // Check if match is resolved
       if (match.result === null || match.result === undefined) {
         await handler.sendMessage(
@@ -1237,41 +1474,47 @@ Ready to claim your refund?`;
 Ready to claim your winnings?`;
       }
 
-      // Send interactive message with buttons
-      await handler.sendInteractionRequest(
-        channelId,
-        {
-          case: "form",
-          value: {
-            id: interactionId,
-            title: "Claim Winnings",
-            content: message,
-            components: [
-              {
-                id: "claim-confirm",
-                component: {
-                  case: "button",
-                  value: {
-                    label: "Claim Winnings",
-                    style: 1, // PRIMARY style
+      // Send interactive message with buttons (with retry for network errors)
+      await retryWithBackoff(
+        async () => {
+          await handler.sendInteractionRequest(
+            channelId,
+            {
+              case: "form",
+              value: {
+                id: interactionId,
+                title: "Claim Winnings",
+                content: message,
+                components: [
+                  {
+                    id: "claim-confirm",
+                    component: {
+                      case: "button",
+                      value: {
+                        label: "Claim Winnings",
+                        style: 1, // PRIMARY style
+                      },
+                    },
                   },
-                },
-              },
-              {
-                id: "claim-cancel",
-                component: {
-                  case: "button",
-                  value: {
-                    label: "Cancel",
-                    style: 2, // SECONDARY style
+                  {
+                    id: "claim-cancel",
+                    component: {
+                      case: "button",
+                      value: {
+                        label: "Cancel",
+                        style: 2, // SECONDARY style
+                      },
+                    },
                   },
-                },
+                ],
               },
-            ],
-          },
-        } as any,
-        hexToBytes(userId as `0x${string}`),
-        opts // threading options
+            } as any,
+            hexToBytes(userId as `0x${string}`),
+            opts // threading options
+          );
+        },
+        3, // max retries
+        1000 // base delay (1s)
       );
 
       // Store claim context in a temporary table/map
@@ -1279,11 +1522,19 @@ Ready to claim your winnings?`;
       // The onInteractionResponse handler will parse it
     } catch (error) {
       console.error("Error in /claim command:", error);
-      await handler.sendMessage(
-        channelId,
-        "❌ An error occurred while processing your claim. Please try again or contact support.",
-        opts
-      );
+
+      // Check if it's a network error that failed after retries
+      const isNetworkError =
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === 9 || error.code === 14 || error.code === 4);
+
+      const errorMessage = isNetworkError
+        ? "❌ Network error - Towns Protocol nodes are experiencing issues. Please try again in a few moments."
+        : "❌ An error occurred while processing your claim. Please try again or contact support.";
+
+      await handler.sendMessage(channelId, errorMessage, opts);
     }
   }
 );
@@ -1382,6 +1633,9 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
         return;
       }
 
+      // Try to auto-cancel if match is postponed from a past date
+      match = await tryAutoCancelMatch(match);
+
       // Get wallet address first (needed for eligibility check)
       const walletAddress = await getSmartAccountFromUserId(bot, {
         userId: userId as `0x${string}`,
@@ -1477,49 +1731,63 @@ ${reasonText}
 
 Ready to claim your refund?`;
 
-      // Send interactive message with buttons
-      await handler.sendInteractionRequest(
-        channelId,
-        {
-          case: "form",
-          value: {
-            id: interactionId,
-            title: "Claim Refund",
-            content: message,
-            components: [
-              {
-                id: "refund-confirm",
-                component: {
-                  case: "button",
-                  value: {
-                    label: "Claim Refund",
-                    style: 1, // PRIMARY style
+      // Send interactive message with buttons (with retry for network errors)
+      await retryWithBackoff(
+        async () => {
+          await handler.sendInteractionRequest(
+            channelId,
+            {
+              case: "form",
+              value: {
+                id: interactionId,
+                title: "Claim Refund",
+                content: message,
+                components: [
+                  {
+                    id: "refund-confirm",
+                    component: {
+                      case: "button",
+                      value: {
+                        label: "Claim Refund",
+                        style: 1, // PRIMARY style
+                      },
+                    },
                   },
-                },
-              },
-              {
-                id: "refund-cancel",
-                component: {
-                  case: "button",
-                  value: {
-                    label: "Cancel",
-                    style: 2, // SECONDARY style
+                  {
+                    id: "refund-cancel",
+                    component: {
+                      case: "button",
+                      value: {
+                        label: "Cancel",
+                        style: 2, // SECONDARY style
+                      },
+                    },
                   },
-                },
+                ],
               },
-            ],
-          },
-        } as any,
-        hexToBytes(userId as `0x${string}`),
-        opts // threading options
+            } as any,
+            hexToBytes(userId as `0x${string}`),
+            opts // threading options
+          );
+        },
+        3, // max retries
+        1000 // base delay (1s)
       );
     } catch (error) {
       console.error("Error in /claim_refund command:", error);
-      await handler.sendMessage(
-        channelId,
-        "❌ An error occurred while processing your refund claim. Please try again or contact support.",
-        opts
-      );
+
+      // Check if it's a network error that failed after retries
+      const isNetworkError =
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === 9 || error.code === 14 || error.code === 4);
+
+      const errorMessage = isNetworkError
+        ? "❌ Network error - Towns Protocol nodes are experiencing issues. Please try again in a few moments."
+        : "❌ An error occurred while processing your refund claim. Please try again or contact support.";
+
+      await handler.sendMessage(channelId, errorMessage, opts);
     }
   }
 );
@@ -2359,15 +2627,29 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
 bot.onInteractionResponse(async (handler, event) => {
   const { response, channelId, userId } = event;
 
+  console.log("🔔 [INTERACTION] Received interaction response");
+  console.log("  - userId:", userId);
+  console.log("  - channelId:", channelId);
+  console.log(
+    "  - response.payload.content?.case:",
+    response.payload.content?.case
+  );
+
   // Handle form interactions (buttons)
   if (response.payload.content?.case === "form") {
     const form = response.payload.content.value;
     const requestId = form.requestId;
 
+    console.log("📋 [INTERACTION] Form interaction detected");
+    console.log("  - requestId:", requestId);
+    console.log("  - form.components.length:", form.components.length);
+
     // Check if this is a claim interaction (starts with "claim-" or "claim_refund-")
     // Claim interactions are NOT stored in pending_bets, so skip that check
     const isClaimInteraction =
       requestId.startsWith("claim-") || requestId.startsWith("claim_refund-");
+
+    console.log("  - isClaimInteraction:", isClaimInteraction);
 
     // Retrieve threadId for threading responses (before checking pending bet)
     let threadId: string | undefined;
@@ -2405,10 +2687,18 @@ bot.onInteractionResponse(async (handler, event) => {
     }
 
     // Find which button was clicked
+    console.log("🔍 [INTERACTION] Checking which button was clicked...");
     for (const component of form.components) {
+      console.log("  - component.id:", component.id);
+      console.log("  - component.component.case:", component.component.case);
+
       if (component.component.case === "button") {
         // Handle confirm button
         if (component.id === "confirm") {
+          console.log(
+            "✅ [INTERACTION] 'confirm' button clicked (bet confirmation)"
+          );
+
           // Confirm button should only be for bet confirmations, not claims
           if (!pendingBet) {
             await handler.sendMessage(
@@ -2615,9 +2905,20 @@ bot.onInteractionResponse(async (handler, event) => {
 
         // Handle claim confirm button
         if (component.id === "claim-confirm") {
+          console.log("🔍 [CLAIM-CONFIRM] Button clicked");
+          console.log("  - requestId:", requestId);
+          console.log("  - userId:", userId);
+          console.log("  - channelId:", channelId);
+          console.log("  - threadId:", threadId);
+
           // Parse match ID from interaction ID (format: claim-{matchId}-{userIdPrefix}-{threadId})
           const parts = requestId.split("-");
+          console.log("  - parts after split:", parts);
+          console.log("  - parts.length:", parts.length);
+          console.log("  - parts[0]:", parts[0]);
+
           if (parts.length < 2 || parts[0] !== "claim") {
+            console.log("❌ [CLAIM-CONFIRM] Invalid requestId format");
             await handler.sendMessage(
               channelId,
               "❌ Invalid claim request. Please try again with `/claim`.",
@@ -2627,9 +2928,16 @@ bot.onInteractionResponse(async (handler, event) => {
           }
 
           const matchId = parseInt(parts[1]);
+          console.log("  - matchId:", matchId);
+
           const match = db.getMatchById(matchId);
+          console.log(
+            "  - match found:",
+            match ? `${match.home_team} vs ${match.away_team}` : "NULL"
+          );
 
           if (!match) {
+            console.log("❌ [CLAIM-CONFIRM] Match not found in DB");
             await handler.sendMessage(
               channelId,
               "❌ Match no longer available.",
@@ -2638,7 +2946,10 @@ bot.onInteractionResponse(async (handler, event) => {
             return;
           }
 
+          console.log("  - match.on_chain_match_id:", match.on_chain_match_id);
+
           if (!match.on_chain_match_id) {
+            console.log("❌ [CLAIM-CONFIRM] Match has no on_chain_match_id");
             await handler.sendMessage(
               channelId,
               "❌ Match not found on-chain.",
@@ -2649,8 +2960,15 @@ bot.onInteractionResponse(async (handler, event) => {
 
           // Get user's bet
           const userBet = db.getUserBetForMatch(userId, matchId);
+          console.log(
+            "  - userBet found:",
+            userBet
+              ? `${userBet.amount} ETH, claimed: ${userBet.claimed}`
+              : "NULL"
+          );
 
           if (!userBet) {
+            console.log("❌ [CLAIM-CONFIRM] User has no bet on this match");
             await handler.sendMessage(
               channelId,
               "❌ You don't have a bet on this match.",
@@ -2661,6 +2979,7 @@ bot.onInteractionResponse(async (handler, event) => {
 
           // Double-check not already claimed
           if (userBet.claimed === 1) {
+            console.log("❌ [CLAIM-CONFIRM] Bet already claimed");
             await handler.sendMessage(
               channelId,
               "✅ You've already claimed winnings for this match.",
@@ -2669,45 +2988,77 @@ bot.onInteractionResponse(async (handler, event) => {
             return;
           }
 
+          console.log(
+            "✅ [CLAIM-CONFIRM] All checks passed, generating transaction..."
+          );
+
           // Generate transaction for user to sign
           const calldata = contractService.encodeClaimWinnings(
             match.on_chain_match_id
           );
+          console.log("  - calldata:", calldata);
 
           // Encode threadId in transaction ID for later retrieval
           const txId = `claim-tx-${match.on_chain_match_id}-${userId.slice(
             0,
             8
           )}-${threadId || "none"}`;
+          console.log("  - txId:", txId);
 
-          // Send transaction request to user
-          await handler.sendInteractionRequest(
-            channelId,
-            {
-              case: "transaction",
-              value: {
-                id: txId,
-                title: `Claim Winnings: ${match.home_team} vs ${match.away_team}`,
-                content: {
-                  case: "evm",
-                  value: {
-                    chainId: "8453", // Base mainnet
-                    to: contractService.getContractAddress(),
-                    value: "0", // No ETH sent for claims
-                    data: calldata,
+          const contractAddress = contractService.getContractAddress();
+          console.log("  - contract address:", contractAddress);
+
+          console.log("📤 [CLAIM-CONFIRM] Sending transaction request...");
+          console.log("  - Using threading opts:", opts);
+
+          try {
+            // Send transaction request to user
+            await handler.sendInteractionRequest(
+              channelId,
+              {
+                case: "transaction",
+                value: {
+                  id: txId,
+                  title: `Claim Winnings: ${match.home_team} vs ${match.away_team}`,
+                  content: {
+                    case: "evm",
+                    value: {
+                      chainId: "8453", // Base mainnet
+                      to: contractAddress,
+                      value: "0", // No ETH sent for claims
+                      data: calldata,
+                    },
                   },
                 },
-              },
-            } as any,
-            hexToBytes(userId as `0x${string}`),
-            opts
-          );
+              } as any,
+              hexToBytes(userId as `0x${string}`),
+              opts // Use threading options
+            );
 
-          await handler.sendMessage(
-            channelId,
-            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your winnings.\n\n_I'll confirm once the transaction is mined._",
-            opts
-          );
+            console.log(
+              "✅ [CLAIM-CONFIRM] Transaction request sent successfully"
+            );
+
+            await handler.sendMessage(
+              channelId,
+              "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet to claim your winnings.\n\n_I'll confirm once the transaction is mined._",
+              opts
+            );
+
+            console.log("✅ [CLAIM-CONFIRM] Confirmation message sent");
+          } catch (error) {
+            console.error(
+              "❌ [CLAIM-CONFIRM] Error sending transaction request:",
+              error
+            );
+            console.error("  - Error details:", JSON.stringify(error, null, 2));
+
+            await handler.sendMessage(
+              channelId,
+              "❌ Failed to send transaction request. Please try again or contact support.",
+              opts
+            );
+          }
 
           return;
         }

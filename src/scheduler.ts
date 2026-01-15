@@ -188,8 +188,18 @@ export function startScheduler(
     }, 5 * 60 * 1000) // 5 minutes
   );
 
+  // Auto-cancel postponed matches from past dates every 6 hours
+  intervals.push(
+    setInterval(() => {
+      autoCancelPostponedMatches();
+    }, 6 * 60 * 60 * 1000) // 6 hours
+  );
+
   // Initial fetch on startup (morning fetch logic)
   morningFetch();
+
+  // Initial auto-cancel check on startup
+  autoCancelPostponedMatches();
 
   console.log("✅ Scheduler started");
 }
@@ -917,10 +927,105 @@ function cleanupPendingBets(): void {
 }
 
 /**
+ * Auto-cancel postponed matches from past dates
+ * Runs periodically to clean up old postponed matches
+ */
+async function autoCancelPostponedMatches(): Promise<void> {
+  if (!contractServiceInstance?.isContractAvailable()) {
+    return;
+  }
+
+  // Get all postponed matches with on-chain IDs
+  const allMatches = db.getAllMatches();
+  const postponedMatches = allMatches.filter(
+    (m) => m.status === "POSTPONED" && m.on_chain_match_id
+  );
+
+  if (postponedMatches.length === 0) {
+    return;
+  }
+
+  const today = new Date();
+  const todayStr = `${today.getUTCFullYear()}${String(
+    today.getUTCMonth() + 1
+  ).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
+
+  let cancelledCount = 0;
+  let skippedCount = 0;
+
+  for (const match of postponedMatches) {
+    if (!match.match_code) continue;
+
+    const matchDateStr = match.match_code.split("-")[0];
+
+    // Only cancel if match is from a past date (at least 1 day old)
+    if (matchDateStr < todayStr) {
+      try {
+        // Check on-chain status first to avoid reverting
+        const onChainMatch = await contractServiceInstance.getMatch(
+          match.on_chain_match_id!
+        );
+
+        // Skip if match not found on-chain or already cancelled/resolved
+        if (!onChainMatch) {
+          console.log(
+            `⏭️ Skipping match ${match.match_code} - not found on-chain`
+          );
+          skippedCount++;
+          continue;
+        }
+
+        if (
+          onChainMatch.status === 3 || // CANCELLED
+          onChainMatch.status === 2 // RESOLVED
+        ) {
+          console.log(
+            `⏭️ Skipping match ${match.match_code} - already ${
+              onChainMatch.status === 3 ? "cancelled" : "resolved"
+            } on-chain`
+          );
+          // Update local DB to match on-chain status
+          if (onChainMatch.status === 3 && match.status !== "CANCELLED") {
+            db.updateMatchStatus(match.id, "CANCELLED");
+          }
+          skippedCount++;
+          continue;
+        }
+
+        // Proceed with cancellation
+        const result = await contractServiceInstance.cancelMatch(
+          match.on_chain_match_id!,
+          "Match postponed - auto-cancelled by scheduler"
+        );
+
+        if (result) {
+          db.updateMatchStatus(match.id, "CANCELLED");
+          console.log(
+            `✅ Auto-cancelled postponed match: ${match.home_team} vs ${match.away_team} (${match.match_code})`
+          );
+          cancelledCount++;
+        }
+      } catch (error) {
+        console.error(
+          `❌ Failed to auto-cancel match ${match.id} (${match.match_code}):`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+  }
+
+  if (cancelledCount > 0 || skippedCount > 0) {
+    console.log(
+      `🚫 Auto-cancel summary: ${cancelledCount} cancelled, ${skippedCount} skipped`
+    );
+  }
+}
+
+/**
  * Manually trigger a job (for testing/admin)
  */
 export async function triggerJob(
-  job: "fetch" | "close" | "results" | "cleanup"
+  job: "fetch" | "close" | "results" | "cleanup" | "cancel"
 ): Promise<void> {
   switch (job) {
     case "fetch":
@@ -934,6 +1039,9 @@ export async function triggerJob(
       break;
     case "cleanup":
       cleanupPendingBets();
+      break;
+    case "cancel":
+      await autoCancelPostponedMatches();
       break;
   }
 }
