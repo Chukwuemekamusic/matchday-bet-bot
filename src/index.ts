@@ -7,6 +7,7 @@ import { footballApi, FootballAPIService } from "./services/footballApi";
 import { subgraphService } from "./services/subgraph";
 import { MatchOperationsService } from "./services/matchOperations";
 import { matchLookup } from "./services/matchLookup";
+import { interactionService, InteractionType } from "./services/interactions";
 import {
   formatEth,
   parseEth,
@@ -401,11 +402,14 @@ Wallet: ${truncateAddress(walletAddress)}`,
         return;
       }
 
-      // Create interaction for claiming refund (encode threadId for later retrieval)
-      const interactionId = `claim_refund-${match.id}-${userId.slice(
-        0,
-        8
-      )}-${eventId}`;
+      // Generate interaction ID using service
+      const interactionId = interactionService.generateInteractionId(
+        InteractionType.CLAIM_REFUND,
+        match.id,
+        userId,
+        eventId
+      );
+
       const refundAmount = BigInt(onChainBet.amount);
 
       // Determine status display and reason
@@ -431,47 +435,21 @@ ${reasonText}
 
 Ready to claim your refund?`;
 
-      // Send interactive message with buttons (with retry for network errors)
-      await retryWithBackoff(
-        async () => {
-          await handler.sendInteractionRequest(
-            channelId,
-            {
-              case: "form",
-              value: {
-                id: interactionId,
-                title: "Claim Refund",
-                content: message,
-                components: [
-                  {
-                    id: "refund-confirm",
-                    component: {
-                      case: "button",
-                      value: {
-                        label: "Claim Refund",
-                        style: 1, // PRIMARY style
-                      },
-                    },
-                  },
-                  {
-                    id: "refund-cancel",
-                    component: {
-                      case: "button",
-                      value: {
-                        label: "Cancel",
-                        style: 2, // SECONDARY style
-                      },
-                    },
-                  },
-                ],
-              },
-            } as any,
-            hexToBytes(userId as `0x${string}`),
-            opts // threading options
-          );
+      // Send interactive message with buttons using service
+      await interactionService.sendFormInteraction(
+        handler,
+        channelId,
+        userId,
+        {
+          id: interactionId,
+          title: "Claim Refund",
+          content: message,
+          buttons: [
+            { id: "refund-confirm", label: "Claim Refund", style: 1 },
+            { id: "refund-cancel", label: "Cancel", style: 2 },
+          ],
         },
-        3, // max retries
-        1000 // base delay (1s)
+        threadId
       );
     } catch (error) {
       console.error("Error in /claim_refund command:", error);
@@ -952,10 +930,8 @@ bot.onInteractionResponse(async (handler, event) => {
     console.log("  - requestId:", requestId);
     console.log("  - form.components.length:", form.components.length);
 
-    // Check if this is a claim interaction (starts with "claim-" or "claim_refund-")
-    // Claim interactions are NOT stored in pending_bets, so skip that check
-    const isClaimInteraction =
-      requestId.startsWith("claim-") || requestId.startsWith("claim_refund-");
+    // Use interaction service to check if this is a claim interaction
+    const isClaimInteraction = interactionService.isClaimInteraction(requestId);
 
     console.log("  - isClaimInteraction:", isClaimInteraction);
 
@@ -973,11 +949,10 @@ bot.onInteractionResponse(async (handler, event) => {
         threadId = pendingBet.thread_id;
       }
     } else {
-      // For claim/claim_refund interactions, parse threadId from requestId
-      // Format: "claim-{matchId}-{userIdPrefix}-{threadId}" or "claim_refund-{matchId}-{userIdPrefix}-{threadId}"
-      const parts = requestId.split("-");
-      if (parts.length >= 4) {
-        threadId = parts[parts.length - 1]; // Last part is threadId
+      // For claim/claim_refund interactions, parse threadId from requestId using service
+      const metadata = interactionService.parseInteractionId(requestId);
+      if (metadata) {
+        threadId = metadata.threadId;
       }
     }
 

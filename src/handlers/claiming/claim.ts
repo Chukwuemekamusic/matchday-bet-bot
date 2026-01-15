@@ -4,7 +4,6 @@
  */
 
 import { getSmartAccountFromUserId } from "@towns-protocol/bot";
-import { hexToBytes } from "viem";
 import type {
   CommandHandler,
   CommandEventWithArgs,
@@ -12,10 +11,13 @@ import type {
 } from "../types";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { formatEth, formatOutcome, truncateAddress } from "../../utils/format";
-import { retryWithBackoff } from "../../utils/retry";
 import type { DBMatch } from "../../types";
 import { db } from "../../db";
 import { matchLookup } from "../../services/matchLookup";
+import {
+  interactionService,
+  InteractionType,
+} from "../../services/interactions";
 
 export const createClaimHandler = (
   context: HandlerContext
@@ -236,11 +238,14 @@ Use \`/stats\` to see your total winnings.`,
         return;
       }
 
-      // Create interaction for claiming (encode threadId for later retrieval)
-      const interactionId = `claim-${resolvedMatch.id}-${userId.slice(
-        0,
-        8
-      )}-${eventId}`;
+      // Generate interaction ID using service
+      const interactionId = interactionService.generateInteractionId(
+        InteractionType.CLAIM,
+        resolvedMatch.id,
+        userId,
+        eventId
+      );
+
       const stakeAmount = BigInt(onChainBet.amount);
       const profit = potentialWinnings - stakeAmount;
 
@@ -273,47 +278,21 @@ Ready to claim your refund?`;
 Ready to claim your winnings?`;
       }
 
-      // Send interactive message with buttons (with retry for network errors)
-      await retryWithBackoff(
-        async () => {
-          await handler.sendInteractionRequest(
-            channelId,
-            {
-              case: "form",
-              value: {
-                id: interactionId,
-                title: "Claim Winnings",
-                content: message,
-                components: [
-                  {
-                    id: "claim-confirm",
-                    component: {
-                      case: "button",
-                      value: {
-                        label: "Claim Winnings",
-                        style: 1, // PRIMARY style
-                      },
-                    },
-                  },
-                  {
-                    id: "claim-cancel",
-                    component: {
-                      case: "button",
-                      value: {
-                        label: "Cancel",
-                        style: 2, // SECONDARY style
-                      },
-                    },
-                  },
-                ],
-              },
-            } as any,
-            hexToBytes(userId as `0x${string}`),
-            opts // threading options
-          );
+      // Send interactive message with buttons using service
+      await interactionService.sendFormInteraction(
+        handler,
+        channelId,
+        userId,
+        {
+          id: interactionId,
+          title: "Claim Winnings",
+          content: message,
+          buttons: [
+            { id: "claim-confirm", label: "Claim Winnings", style: 1 },
+            { id: "claim-cancel", label: "Cancel", style: 2 },
+          ],
         },
-        3, // max retries
-        1000 // base delay (1s)
+        threadId
       );
 
       // Store claim context in a temporary table/map

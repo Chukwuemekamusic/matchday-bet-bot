@@ -3,7 +3,6 @@
  * Place a bet (step 1: create pending bet)
  */
 
-import { hexToBytes } from "viem";
 import type {
   CommandHandler,
   CommandEventWithArgs,
@@ -11,8 +10,11 @@ import type {
 } from "../types";
 import { db } from "../../db";
 import { matchLookup } from "../../services/matchLookup";
+import {
+  interactionService,
+  InteractionType,
+} from "../../services/interactions";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
-import { retryWithBackoff } from "../../utils/retry";
 import {
   formatEth,
   parseEth,
@@ -209,7 +211,13 @@ Example: \`/bet 1 home 0.01\``,
         }
       }
 
-      const interactionId = `bet-${match.id}-${userId}-${Date.now()}`;
+      // Generate interaction ID using service
+      const interactionId = interactionService.generateInteractionId(
+        InteractionType.BET_CONFIRM,
+        match.id,
+        userId,
+        threadId
+      );
 
       // Store interaction ID with pending bet
       db.updatePendingBetInteractionId(userId, interactionId);
@@ -226,53 +234,27 @@ ${potentialWinnings}
 
 _This pending bet expires in 5 minutes._`;
 
-      // Send interactive message with buttons (with retry for network errors)
+      // Send interactive message with buttons using service
       try {
         console.log("📤 Attempting to send interaction request...");
         console.log("  - channelId:", channelId);
         console.log("  - interactionId:", interactionId);
         console.log("  - userId:", userId);
 
-        await retryWithBackoff(
-          async () => {
-            await handler.sendInteractionRequest(
-              channelId,
-              {
-                case: "form",
-                value: {
-                  id: interactionId,
-                  title: "Confirm Bet",
-                  content: message,
-                  components: [
-                    {
-                      id: "confirm",
-                      component: {
-                        case: "button",
-                        value: {
-                          label: "Confirm & Sign",
-                          style: 1, // PRIMARY style
-                        },
-                      },
-                    },
-                    {
-                      id: "cancel",
-                      component: {
-                        case: "button",
-                        value: {
-                          label: "Cancel",
-                          style: 2, // SECONDARY style
-                        },
-                      },
-                    },
-                  ],
-                },
-              } as any, // Type assertion for complex protobuf types
-              hexToBytes(userId as `0x${string}`), // recipient
-              opts // threading options
-            );
+        await interactionService.sendFormInteraction(
+          handler,
+          channelId,
+          userId,
+          {
+            id: interactionId,
+            title: "Confirm Bet",
+            content: message,
+            buttons: [
+              { id: "confirm", label: "Confirm & Sign", style: 1 },
+              { id: "cancel", label: "Cancel", style: 2 },
+            ],
           },
-          3, // max retries
-          1000 // base delay (1s)
+          threadId
         );
 
         console.log("✅ Interaction request sent successfully");
