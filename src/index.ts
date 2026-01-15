@@ -2236,6 +2236,110 @@ This match hasn't been created on-chain yet (no bets placed).`
 
     const apiMatch = await footballApi.getMatch(match.api_match_id);
 
+    // Check if match is postponed or cancelled
+    if (FootballAPIService.isPostponed(apiMatch.status)) {
+      const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
+      await handler.sendMessage(
+        channelId,
+        `🚫 **Match Postponed/Cancelled**
+
+**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
+**Status:** ${apiMatch.status}
+**On-Chain Match ID:** ${match.on_chain_match_id}
+
+Checking on-chain status...`
+      );
+
+      // Check on-chain status first to avoid reverting
+      const onChainMatch = await contractService.getMatch(
+        match.on_chain_match_id
+      );
+
+      if (!onChainMatch) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **Match Not Found On-Chain**
+
+**Match ID:** ${match.on_chain_match_id}
+
+The match was not found on the blockchain. It may have been deleted or never created.`
+        );
+        return;
+      }
+
+      // Check if already cancelled or resolved
+      if (onChainMatch.status === 3) {
+        // Already CANCELLED
+        db.updateMatchStatus(match.id, "CANCELLED");
+        await handler.sendMessage(
+          channelId,
+          `ℹ️ **Match Already Cancelled**
+
+**Match ID:** ${match.on_chain_match_id}
+**On-Chain Status:** CANCELLED (${onChainMatch.status})
+
+This match is already cancelled on-chain. Bettors can claim refunds using \`/claim\``
+        );
+        return;
+      }
+
+      if (onChainMatch.status === 2) {
+        // Already RESOLVED
+        await handler.sendMessage(
+          channelId,
+          `❌ **Match Already Resolved**
+
+**Match ID:** ${match.on_chain_match_id}
+**On-Chain Status:** RESOLVED (${onChainMatch.status})
+
+This match has already been resolved on-chain and cannot be cancelled.`
+        );
+        return;
+      }
+
+      // Cancel on-chain
+      await handler.sendMessage(
+        channelId,
+        `⏳ Cancelling match on-chain and enabling refunds...`
+      );
+
+      const cancelReason = `Match ${apiMatch.status.toLowerCase()} - manually cancelled by admin`;
+      const cancelResult = await contractService.cancelMatch(
+        match.on_chain_match_id,
+        cancelReason
+      );
+
+      if (!cancelResult) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **On-Chain Cancellation Failed**
+
+Failed to cancel the match on-chain. Check logs for details.`
+        );
+        return;
+      }
+
+      // Update local database
+      db.updateMatchStatus(match.id, "CANCELLED");
+
+      // Get pool info for refund message
+      const pools = await contractService.getPools(match.on_chain_match_id);
+      const totalPool = pools ? formatEth(pools.total) : "?";
+
+      // Success message
+      await handler.sendMessage(
+        channelId,
+        `✅ **Match Cancelled Successfully**
+
+🚫 **${match.home_team} vs ${match.away_team}**
+📊 **Total Pool:** ${totalPool} ETH
+🔗 **Transaction:** [View on BaseScan](https://basescan.org/tx/${cancelResult.txHash})
+
+💰 **Refunds Available:** All bettors can claim full refunds using \`/claim\``
+      );
+      return;
+    }
+
     // Check if match is finished
     if (!FootballAPIService.isFinished(apiMatch.status)) {
       const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
@@ -2246,7 +2350,8 @@ This match hasn't been created on-chain yet (no bets placed).`
 **Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
 **Status:** ${apiMatch.status}
 
-Cannot resolve a match that hasn't finished yet.`
+Cannot resolve a match that hasn't finished yet.
+💡 **Tip:** If the match is postponed/cancelled, run \`/resolve ${input}\` again to cancel it on-chain.`
       );
       return;
     }

@@ -2,6 +2,7 @@ import {
   createPublicClient,
   http,
   encodeFunctionData,
+  decodeEventLog,
   type PublicClient,
   type Address,
 } from "viem";
@@ -915,28 +916,92 @@ class ContractService {
       }
 
       // Parse the MatchCreated event to get the match ID
-      const matchCreatedEvent = receipt.logs.find((log) => {
-        try {
-          const topics = log.topics;
-          // MatchCreated event signature
-          return (
-            topics[0] === "0x..." // You'll need to add the actual event signature hash
-          );
-        } catch {
-          return false;
-        }
-      });
+      let matchId: number | null = null;
 
-      if (matchCreatedEvent && matchCreatedEvent.topics[1]) {
-        // First indexed parameter is matchId
-        const matchId = Number(BigInt(matchCreatedEvent.topics[1]));
-        console.log(`Match created with ID: ${matchId}`);
+      for (const log of receipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: CONTRACT_ABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          if (decoded.eventName === "MatchCreated") {
+            matchId = Number(decoded.args.matchId);
+            console.log(
+              `✅ Match created with ID: ${matchId} (from MatchCreated event)`
+            );
+            break;
+          }
+        } catch {
+          // Not a MatchCreated event or failed to decode, continue
+          continue;
+        }
+      }
+
+      if (matchId !== null) {
         return { matchId, txHash: hash };
       }
 
-      // Fallback: get the next match ID - 1
-      const nextId = await this.getNextMatchId();
-      return { matchId: nextId - 1, txHash: hash };
+      // Fallback: If we couldn't parse the event, try to verify using nextMatchId
+      console.warn(
+        `⚠️  Failed to parse MatchCreated event from tx ${hash}. Attempting fallback verification...`
+      );
+
+      try {
+        const nextId = await this.getNextMatchId();
+        const candidateId = nextId - 1;
+
+        console.log(
+          `Checking if match ID ${candidateId} matches our created match...`
+        );
+
+        // Verify the match at candidateId matches what we created
+        const onChainMatch = await this.getMatch(candidateId);
+
+        if (!onChainMatch) {
+          console.error(`❌ Match ID ${candidateId} does not exist on-chain`);
+          return {
+            error: `Failed to verify match creation. Transaction succeeded (${hash}) but cannot confirm match ID.`,
+            errorType: "EVENT_PARSE_FAILED",
+          };
+        }
+
+        // Verify teams match (case-insensitive)
+        const homeMatches =
+          onChainMatch.homeTeam.toLowerCase() === homeTeam.toLowerCase();
+        const awayMatches =
+          onChainMatch.awayTeam.toLowerCase() === awayTeam.toLowerCase();
+        const kickoffMatches =
+          Math.abs(Number(onChainMatch.kickoffTime) - kickoffTime) < 300; // Within 5 minutes
+
+        if (homeMatches && awayMatches && kickoffMatches) {
+          console.log(
+            `✅ Verified match ID ${candidateId} via fallback (teams and kickoff match)`
+          );
+          return { matchId: candidateId, txHash: hash };
+        } else {
+          console.error(
+            `❌ Match ID ${candidateId} does not match our created match`
+          );
+          console.error(
+            `Expected: ${homeTeam} vs ${awayTeam} @ ${kickoffTime}`
+          );
+          console.error(
+            `On-chain: ${onChainMatch.homeTeam} vs ${onChainMatch.awayTeam} @ ${onChainMatch.kickoffTime}`
+          );
+          return {
+            error: `Failed to verify match creation. Transaction succeeded (${hash}) but match data mismatch. Please check manually.`,
+            errorType: "MATCH_VERIFICATION_FAILED",
+          };
+        }
+      } catch (fallbackError) {
+        console.error(`❌ Fallback verification failed:`, fallbackError);
+        return {
+          error: `Failed to parse match creation event and fallback verification failed. Tx: ${hash}`,
+          errorType: "EVENT_PARSE_FAILED",
+        };
+      }
     } catch (error: any) {
       console.error(`Failed to create match on-chain`, error);
 
@@ -1335,7 +1400,8 @@ class ContractService {
         if (winnerPool === 0n) {
           return {
             eligible: false,
-            reason: "Use /claim to get your refund (no winners - everyone gets refund)",
+            reason:
+              "Use /claim to get your refund (no winners - everyone gets refund)",
           };
         }
 

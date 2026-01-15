@@ -108,7 +108,7 @@ const commands = [
   {
     name: "resolve",
     description:
-      "🔧 [Admin] Manually resolve a finished match (by # or match code)",
+      "🔧 [Admin] Manually resolve/cancel a match (by # or match code)",
   },
 ] as const satisfies BotCommand[];
 
