@@ -3,8 +3,12 @@
  * Show odds for a match
  */
 
-import type { CommandHandler, CommandEventWithArgs, HandlerContext } from "../types";
-import { db } from "../../db";
+import type {
+  CommandHandler,
+  CommandEventWithArgs,
+  HandlerContext,
+} from "../types";
+import { matchLookup } from "../../services/matchLookup";
 import {
   formatEth,
   formatTime,
@@ -34,14 +38,14 @@ export const createOddsHandler = (
       return;
     }
 
-    const match = db.getMatchByDailyId(matchNum);
-    if (!match) {
-      await handler.sendMessage(
-        channelId,
-        `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
-      );
+    // Use match lookup service
+    const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
+    if (!lookupResult.success) {
+      await handler.sendMessage(channelId, lookupResult.errorMessage!);
       return;
     }
+
+    const match = lookupResult.match!;
 
     // If match hasn't been created on-chain yet OR contract not deployed
     if (
@@ -107,4 +111,3 @@ ${
     await handler.sendMessage(channelId, message);
   };
 };
-

@@ -10,6 +10,7 @@ import type {
   HandlerContext,
 } from "../types";
 import { db } from "../../db";
+import { matchLookup } from "../../services/matchLookup";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { retryWithBackoff } from "../../utils/retry";
 import {
@@ -80,21 +81,23 @@ Example: \`/bet 1 home 0.01\``,
         return;
       }
 
-      // Get match by daily ID
-      const match = db.getMatchByDailyId(matchNum);
+      // Use match lookup service
+      const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
       console.log(
         "📊 Match lookup:",
-        match ? `${match.home_team} vs ${match.away_team}` : "NOT FOUND"
+        lookupResult.success
+          ? `${lookupResult.match!.home_team} vs ${
+              lookupResult.match!.away_team
+            }`
+          : "NOT FOUND"
       );
 
-      if (!match) {
-        await handler.sendMessage(
-          channelId,
-          `❌ Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`,
-          opts
-        );
+      if (!lookupResult.success) {
+        await handler.sendMessage(channelId, lookupResult.errorMessage!, opts);
         return;
       }
+
+      const match = lookupResult.match!;
 
       // Check if betting is still open
       const bettingOpen = isBettingOpen(match.kickoff_time);

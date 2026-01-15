@@ -309,53 +309,19 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
       }
 
       const input = args[0];
-      let match: DBMatch | undefined;
 
-      // Check if input is a match code (contains dash) or just a number
-      if (input.includes("-")) {
-        // Full match code provided (e.g., 20260108-2)
-        match = db.getMatchByMatchCode(input);
+      // Use match lookup service
+      const lookupResult = matchLookup.findMatch(input, {
+        commandName: "/claim_refund",
+        suggestionCommand: "/mybets",
+      });
 
-        if (!match) {
-          await handler.sendMessage(
-            channelId,
-            `❌ Match \`${input}\` not found.\n\nUse \`/matches\` to see available matches.`,
-            opts
-          );
-          return;
-        }
-      } else {
-        // Just a number - try as today's match
-        const matchNum = parseInt(input);
-
-        if (isNaN(matchNum) || matchNum < 1) {
-          await handler.sendMessage(
-            channelId,
-            "❌ Invalid match number. Use `/matches` to see available matches.",
-            opts
-          );
-          return;
-        }
-
-        // Try to find today's match with this daily_id
-        match = db.getMatchByDailyId(matchNum);
-
-        if (!match) {
-          // Generate today's match code hint
-          const today = new Date();
-          const year = today.getUTCFullYear();
-          const month = String(today.getUTCMonth() + 1).padStart(2, "0");
-          const day = String(today.getUTCDate()).padStart(2, "0");
-          const todayCode = `${year}${month}${day}-${matchNum}`;
-
-          await handler.sendMessage(
-            channelId,
-            `❌ Match #${matchNum} not found for today.\n\n**Looking for an older match?**\nTry: \`/claim_refund ${todayCode}\` for match #${matchNum} from another day\n\nOr use \`/mybets\` to see your bets with match codes.`,
-            opts
-          );
-          return;
-        }
+      if (!lookupResult.success) {
+        await handler.sendMessage(channelId, lookupResult.errorMessage!, opts);
+        return;
       }
+
+      let match = lookupResult.match!;
 
       // Check if match is on-chain
       if (!match.on_chain_match_id) {
@@ -562,55 +528,19 @@ Use \`/matches\` to see today's match numbers.`
     }
 
     const input = args[0];
-    let match: DBMatch | undefined;
 
-    // Check if input is a match code (contains dash) or just a number
-    if (input.includes("-")) {
-      // Full match code provided (e.g., 20260110-4)
-      match = db.getMatchByMatchCode(input);
+    // Use match lookup service
+    const lookupResult = matchLookup.findMatch(input, {
+      commandName: "/winners",
+      suggestionCommand: "/matches",
+    });
 
-      if (!match) {
-        await handler.sendMessage(
-          channelId,
-          `❌ Match \`${input}\` not found. Use \`/matches\` to see available matches.`
-        );
-        return;
-      }
-    } else {
-      // Just a number - try as today's match
-      const matchNum = parseInt(input);
-
-      if (isNaN(matchNum) || matchNum < 1) {
-        await handler.sendMessage(
-          channelId,
-          "❌ Invalid match number. Use `/matches` to see available matches."
-        );
-        return;
-      }
-
-      // Try to find today's match with this daily_id
-      match = db.getMatchByDailyId(matchNum);
-
-      if (!match) {
-        // Generate today's match code hint
-        const today = new Date();
-        const year = today.getUTCFullYear();
-        const month = String(today.getUTCMonth() + 1).padStart(2, "0");
-        const day = String(today.getUTCDate()).padStart(2, "0");
-        const todayCode = `${year}${month}${day}-${matchNum}`;
-
-        await handler.sendMessage(
-          channelId,
-          `❌ Match #${matchNum} not found for today.
-
-**Looking for an older match?**
-Try: \`/winners ${todayCode}\` for match #${matchNum} from another day
-
-Use \`/matches\` to see today's matches.`
-        );
-        return;
-      }
+    if (!lookupResult.success) {
+      await handler.sendMessage(channelId, lookupResult.errorMessage!);
+      return;
     }
+
+    const match = lookupResult.match!;
 
     // Check if match is finished
     if (match.status !== "FINISHED") {
@@ -2153,16 +2083,14 @@ Expected format: \`0x...\` (42 characters)`
       return;
     }
 
-    // Get match by daily ID
-    const match = db.getMatchByDailyId(matchNum);
-    if (!match) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Match Not Found**
-Match #${matchNum} not found for today. Use \`/matches\` to see available matches.`
-      );
+    // Use match lookup service
+    const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
+    if (!lookupResult.success) {
+      await handler.sendMessage(channelId, lookupResult.errorMessage!);
       return;
     }
+
+    const match = lookupResult.match!;
 
     // Check if match is on-chain
     if (!match.on_chain_match_id) {
@@ -2283,55 +2211,19 @@ Use \`/matches\` to see today's match numbers.`
     }
 
     const input = args[0];
-    let match: DBMatch | undefined;
 
-    // Check if input is a match code (contains dash) or just a number
-    if (input.includes("-")) {
-      // Full match code provided (e.g., 20260111-2)
-      match = db.getMatchByMatchCode(input);
+    // Use match lookup service
+    const lookupResult = matchLookup.findMatch(input, {
+      commandName: "/resolve",
+      suggestionCommand: "/matches",
+    });
 
-      if (!match) {
-        await handler.sendMessage(
-          channelId,
-          `❌ Match \`${input}\` not found. Use \`/matches\` to see available matches.`
-        );
-        return;
-      }
-    } else {
-      // Just a number - try as today's match
-      const matchNum = parseInt(input);
-
-      if (isNaN(matchNum) || matchNum < 1) {
-        await handler.sendMessage(
-          channelId,
-          "❌ Invalid match number. Use `/matches` to see available matches."
-        );
-        return;
-      }
-
-      // Try to find today's match with this daily_id
-      match = db.getMatchByDailyId(matchNum);
-
-      if (!match) {
-        // Generate today's match code hint
-        const today = new Date();
-        const year = today.getUTCFullYear();
-        const month = String(today.getUTCMonth() + 1).padStart(2, "0");
-        const day = String(today.getUTCDate()).padStart(2, "0");
-        const todayCode = `${year}${month}${day}-${matchNum}`;
-
-        await handler.sendMessage(
-          channelId,
-          `❌ Match #${matchNum} not found for today.
-
-**Looking for an older match?**
-Try: \`/resolve ${todayCode}\` for match #${matchNum} from another day
-
-Use \`/matches\` to see today's matches.`
-        );
-        return;
-      }
+    if (!lookupResult.success) {
+      await handler.sendMessage(channelId, lookupResult.errorMessage!);
+      return;
     }
+
+    const match = lookupResult.match!;
 
     // Check if match has on-chain ID
     if (!match.on_chain_match_id) {
