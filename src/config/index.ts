@@ -65,6 +65,15 @@ export const config = {
     pendingBetTimeout: 5 * 60 * 1000, // 5 minutes in ms
   },
 
+  // Match cancellation settings
+  cancellation: {
+    // Delay before auto-cancelling same-day postponed matches (in seconds)
+    // Default: 1 hour (3600 seconds)
+    postponementDelay: parseInt(
+      optionalEnv("POSTPONEMENT_CANCEL_DELAY", "3600")
+    ),
+  },
+
   // Optional channel for announcements
   // defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
 

@@ -34,6 +34,7 @@ export interface DBMatch {
   created_at: number;
   resolved_at: number | null;
   posted_to_towns: boolean;
+  postponed_at: number | null; // Unix timestamp when match was first marked as postponed
 }
 
 // Pending bet (for confirmation flow)

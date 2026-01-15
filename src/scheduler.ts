@@ -10,6 +10,7 @@ import { footballApi, FootballAPIService } from "./services/footballApi";
 import type { ContractService } from "./services/contract";
 import { Outcome } from "./types";
 import { formatEth } from "./utils/format";
+import { config } from "./config";
 
 // Store intervals for cleanup
 const intervals: NodeJS.Timeout[] = [];
@@ -188,11 +189,12 @@ export function startScheduler(
     }, 5 * 60 * 1000) // 5 minutes
   );
 
-  // Auto-cancel postponed matches from past dates every 6 hours
+  // Auto-cancel postponed matches every 15 minutes
+  // This checks both past-date postponements and same-day postponements
   intervals.push(
     setInterval(() => {
       autoCancelPostponedMatches();
-    }, 6 * 60 * 60 * 1000) // 6 hours
+    }, 15 * 60 * 1000) // 15 minutes
   );
 
   // Initial fetch on startup (morning fetch logic)
@@ -927,8 +929,12 @@ function cleanupPendingBets(): void {
 }
 
 /**
- * Auto-cancel postponed matches from past dates
- * Runs periodically to clean up old postponed matches
+ * Auto-cancel postponed matches
+ * Cancels matches that are:
+ * 1. From past dates (at least 1 day old), OR
+ * 2. Same-day postponements after a configured delay (default: 1 hour)
+ *
+ * Also sends notifications to the channel when matches are cancelled
  */
 async function autoCancelPostponedMatches(): Promise<void> {
   if (!contractServiceInstance?.isContractAvailable()) {
@@ -945,72 +951,134 @@ async function autoCancelPostponedMatches(): Promise<void> {
     return;
   }
 
+  const now = Math.floor(Date.now() / 1000); // Current time in seconds
   const today = new Date();
   const todayStr = `${today.getUTCFullYear()}${String(
     today.getUTCMonth() + 1
   ).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
 
+  const postponementDelay = config.cancellation.postponementDelay; // Default: 3600 seconds (1 hour)
+
   let cancelledCount = 0;
   let skippedCount = 0;
+  const cancelledMatches: Array<{
+    homeTeam: string;
+    awayTeam: string;
+    competition: string;
+    matchCode: string;
+  }> = [];
 
   for (const match of postponedMatches) {
     if (!match.match_code) continue;
 
     const matchDateStr = match.match_code.split("-")[0];
+    const isFromPastDate = matchDateStr < todayStr;
+    const isSameDayPostponement = matchDateStr === todayStr;
 
-    // Only cancel if match is from a past date (at least 1 day old)
-    if (matchDateStr < todayStr) {
-      try {
-        // Check on-chain status first to avoid reverting
-        const onChainMatch = await contractServiceInstance.getMatch(
-          match.on_chain_match_id!
-        );
+    // Determine if we should cancel this match
+    let shouldCancel = false;
+    let cancelReason = "";
 
-        // Skip if match not found on-chain or already cancelled/resolved
-        if (!onChainMatch) {
-          console.log(
-            `⏭️ Skipping match ${match.match_code} - not found on-chain`
-          );
-          skippedCount++;
-          continue;
-        }
-
-        if (
-          onChainMatch.status === 3 || // CANCELLED
-          onChainMatch.status === 2 // RESOLVED
-        ) {
-          console.log(
-            `⏭️ Skipping match ${match.match_code} - already ${
-              onChainMatch.status === 3 ? "cancelled" : "resolved"
-            } on-chain`
-          );
-          // Update local DB to match on-chain status
-          if (onChainMatch.status === 3 && match.status !== "CANCELLED") {
-            db.updateMatchStatus(match.id, "CANCELLED");
-          }
-          skippedCount++;
-          continue;
-        }
-
-        // Proceed with cancellation
-        const result = await contractServiceInstance.cancelMatch(
-          match.on_chain_match_id!,
-          "Match postponed - auto-cancelled by scheduler"
-        );
-
-        if (result) {
-          db.updateMatchStatus(match.id, "CANCELLED");
-          console.log(
-            `✅ Auto-cancelled postponed match: ${match.home_team} vs ${match.away_team} (${match.match_code})`
-          );
-          cancelledCount++;
-        }
-      } catch (error) {
-        console.error(
-          `❌ Failed to auto-cancel match ${match.id} (${match.match_code}):`,
-          error instanceof Error ? error.message : error
-        );
+    if (isFromPastDate) {
+      // Always cancel matches from past dates
+      shouldCancel = true;
+      cancelReason = "Match from past date - auto-cancelled";
+    } else if (isSameDayPostponement && match.postponed_at) {
+      // For same-day postponements, check if enough time has passed
+      const timeSincePostponed = now - match.postponed_at;
+      if (timeSincePostponed >= postponementDelay) {
+        shouldCancel = true;
+        const hoursWaited = Math.floor(timeSincePostponed / 3600);
+        cancelReason = `Same-day postponement - auto-cancelled after ${hoursWaited}h`;
       }
+    }
+
+    if (!shouldCancel) {
+      continue;
+    }
+
+    try {
+      // Check on-chain status first to avoid reverting
+      const onChainMatch = await contractServiceInstance.getMatch(
+        match.on_chain_match_id!
+      );
+
+      // Skip if match not found on-chain or already cancelled/resolved
+      if (!onChainMatch) {
+        console.log(
+          `⏭️ Skipping match ${match.match_code} - not found on-chain`
+        );
+        skippedCount++;
+        continue;
+      }
+
+      if (
+        onChainMatch.status === 3 || // CANCELLED
+        onChainMatch.status === 2 // RESOLVED
+      ) {
+        console.log(
+          `⏭️ Skipping match ${match.match_code} - already ${
+            onChainMatch.status === 3 ? "cancelled" : "resolved"
+          } on-chain`
+        );
+        // Update local DB to match on-chain status
+        if (onChainMatch.status === 3 && match.status !== "CANCELLED") {
+          db.updateMatchStatus(match.id, "CANCELLED");
+        }
+        skippedCount++;
+        continue;
+      }
+
+      // Proceed with cancellation
+      const result = await contractServiceInstance.cancelMatch(
+        match.on_chain_match_id!,
+        cancelReason
+      );
+
+      if (result) {
+        db.updateMatchStatus(match.id, "CANCELLED");
+        console.log(
+          `✅ Auto-cancelled postponed match: ${match.home_team} vs ${match.away_team} (${match.match_code}) - ${cancelReason}`
+        );
+        cancelledCount++;
+
+        // Track cancelled match for notification
+        cancelledMatches.push({
+          homeTeam: match.home_team,
+          awayTeam: match.away_team,
+          competition: match.competition,
+          matchCode: match.match_code,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `❌ Failed to auto-cancel match ${match.id} (${match.match_code}):`,
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  // Send notification to channel if any matches were cancelled
+  if (cancelledCount > 0 && botInstance && defaultChannelId) {
+    try {
+      const matchList = cancelledMatches
+        .map((m) => `• **${m.homeTeam} vs ${m.awayTeam}** (${m.competition})`)
+        .join("\n");
+
+      await botInstance.sendMessage(
+        defaultChannelId,
+        `🚫 **Match${cancelledCount > 1 ? "es" : ""} Cancelled**
+
+${matchList}
+
+${cancelledCount > 1 ? "These matches were" : "This match was"} postponed and ${
+          cancelledCount > 1 ? "have" : "has"
+        } been automatically cancelled.
+
+💰 **Refunds Available:** All bettors can claim refunds using \`/claim\``
+      );
+    } catch (error) {
+      console.error("❌ Failed to send cancellation notification:", error);
     }
   }
 

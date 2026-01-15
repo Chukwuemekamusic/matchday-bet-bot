@@ -178,6 +178,14 @@ class DatabaseService {
     // This generates match codes for any matches that don't have them yet
     this.migrateMatchCodes();
 
+    // Migrate existing databases: Add postponed_at column to matches
+    try {
+      this.db.exec(`ALTER TABLE matches ADD COLUMN postponed_at INTEGER`);
+      console.log("✅ Migration: Added postponed_at column to matches table");
+    } catch (error) {
+      // Column already exists
+    }
+
     console.log("Database initialized successfully");
   }
 
@@ -215,13 +223,21 @@ class DatabaseService {
           match.away_score
         );
       }
+
+      // Track postponed_at timestamp if transitioning to POSTPONED
+      const shouldSetPostponedAt =
+        match.status === "POSTPONED" && existing.status !== "POSTPONED";
+
       const updateStmt = this.db.prepare(`
         UPDATE matches
         SET status = ?,
             home_score = ?,
             away_score = ?,
             kickoff_time = ?,
-            result = ?
+            result = ?,
+            postponed_at = ${
+              shouldSetPostponedAt ? "strftime('%s', 'now')" : "postponed_at"
+            }
         WHERE api_match_id = ?
       `);
       updateStmt.run(
@@ -527,6 +543,28 @@ class DatabaseService {
       UPDATE matches SET status = ? WHERE id = ?
     `);
     stmt.run(status, matchId);
+  }
+
+  /**
+   * Update match status and set postponed_at timestamp if status is POSTPONED
+   */
+  updateMatchStatusWithPostponedTracking(
+    matchId: number,
+    newStatus: string,
+    oldStatus: string
+  ): void {
+    // If transitioning to POSTPONED status, record the timestamp
+    if (newStatus === "POSTPONED" && oldStatus !== "POSTPONED") {
+      const stmt = this.db.prepare(`
+        UPDATE matches
+        SET status = ?, postponed_at = strftime('%s', 'now')
+        WHERE id = ?
+      `);
+      stmt.run(newStatus, matchId);
+    } else {
+      // Otherwise just update status
+      this.updateMatchStatus(matchId, newStatus);
+    }
   }
 
   /**

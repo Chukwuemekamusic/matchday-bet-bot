@@ -1325,7 +1325,7 @@ Use \`/claimable\` to see matches you can claim from.`,
       // Use V2's getClaimStatus to determine eligibility
       // This handles both regular wins AND "no winners" refund cases
       const claimStatus = await contractService.getClaimStatus(
-        match.on_chain_match_id,
+        match.on_chain_match_id!,
         walletAddress
       );
 
@@ -1391,7 +1391,7 @@ Use \`/stats\` to see your total winnings.`,
 
       // Get on-chain bet to calculate winnings
       const onChainBet = await contractService.getUserBet(
-        match.on_chain_match_id,
+        match.on_chain_match_id!,
         walletAddress
       );
 
@@ -1652,7 +1652,7 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
 
       // Check refund eligibility on-chain
       const eligibility = await contractService.isRefundEligible(
-        match.on_chain_match_id,
+        match.on_chain_match_id!,
         walletAddress
       );
 
@@ -1686,7 +1686,7 @@ Use \`/matches\` to see today's match numbers or \`/mybets\` to see match codes.
 
       // Get on-chain bet for amount
       const onChainBet = await contractService.getUserBet(
-        match.on_chain_match_id,
+        match.on_chain_match_id!,
         walletAddress
       );
 
@@ -3593,6 +3593,17 @@ bot.onMessage(async (handler, { message, channelId, isMentioned }) => {
     await handler.sendMessage(
       channelId,
       "Use `/help` to see all available commands!"
+    );
+    return;
+  }
+
+  if (
+    lowerMessage.includes("channel id") ||
+    lowerMessage.includes("channelid")
+  ) {
+    await handler.sendMessage(
+      channelId,
+      `📍 **Channel ID:**\n\`\`\`\n${channelId}\n\`\`\`\n\nAdd this to your \`.env\` file as:\n\`DEFAULT_CHANNEL_ID=${channelId}\``
     );
     return;
   }
