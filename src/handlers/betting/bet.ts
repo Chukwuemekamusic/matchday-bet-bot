@@ -212,11 +212,12 @@ Example: \`/bet 1 home 0.01\``,
       }
 
       // Generate interaction ID using service
+      // Use opts?.threadId to ensure we use the same threadId as messages
       const interactionId = interactionService.generateInteractionId(
         InteractionType.BET_CONFIRM,
         match.id,
         userId,
-        threadId
+        opts?.threadId
       );
 
       // Store interaction ID with pending bet
@@ -254,7 +255,7 @@ _This pending bet expires in 5 minutes._`;
               { id: "cancel", label: "Cancel", style: 2 },
             ],
           },
-          threadId
+          opts?.threadId
         );
 
         console.log("✅ Interaction request sent successfully");

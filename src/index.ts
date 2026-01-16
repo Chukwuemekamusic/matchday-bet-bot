@@ -403,11 +403,12 @@ Wallet: ${truncateAddress(walletAddress)}`,
       }
 
       // Generate interaction ID using service
+      // Use opts?.threadId to ensure we use the same threadId as messages
       const interactionId = interactionService.generateInteractionId(
         InteractionType.CLAIM_REFUND,
         match.id,
         userId,
-        eventId
+        opts?.threadId
       );
 
       const refundAmount = BigInt(onChainBet.amount);
@@ -449,7 +450,7 @@ Ready to claim your refund?`;
             { id: "refund-cancel", label: "Cancel", style: 2 },
           ],
         },
-        threadId
+        opts?.threadId
       );
     } catch (error) {
       console.error("Error in /claim_refund command:", error);

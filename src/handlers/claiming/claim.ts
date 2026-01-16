@@ -239,11 +239,12 @@ Use \`/stats\` to see your total winnings.`,
       }
 
       // Generate interaction ID using service
+      // Use opts?.threadId to ensure we use the same threadId as messages
       const interactionId = interactionService.generateInteractionId(
         InteractionType.CLAIM,
         resolvedMatch.id,
         userId,
-        eventId
+        opts?.threadId
       );
 
       const stakeAmount = BigInt(onChainBet.amount);
@@ -292,7 +293,7 @@ Ready to claim your winnings?`;
             { id: "claim-cancel", label: "Cancel", style: 2 },
           ],
         },
-        threadId
+        opts?.threadId
       );
 
       // Store claim context in a temporary table/map
