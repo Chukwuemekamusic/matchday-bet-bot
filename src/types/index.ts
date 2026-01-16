@@ -35,6 +35,7 @@ export interface DBMatch {
   resolved_at: number | null;
   posted_to_towns: boolean;
   postponed_at: number | null; // Unix timestamp when match was first marked as postponed
+  on_chain_resolved: boolean; // Whether match has been successfully resolved on-chain
 }
 
 // Pending bet (for confirmation flow)

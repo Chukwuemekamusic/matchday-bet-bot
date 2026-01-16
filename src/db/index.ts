@@ -43,7 +43,8 @@ class DatabaseService {
         total_pool TEXT DEFAULT '0',
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         resolved_at INTEGER,
-        posted_to_towns INTEGER DEFAULT 0
+        posted_to_towns INTEGER DEFAULT 0,
+        on_chain_resolved INTEGER DEFAULT 0
       );
 
       CREATE INDEX IF NOT EXISTS idx_matches_kickoff ON matches(kickoff_time);
@@ -51,6 +52,16 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_matches_api_id ON matches(api_match_id);
       CREATE INDEX IF NOT EXISTS idx_matches_daily_id ON matches(daily_id);
     `);
+
+    // Migration: Add on_chain_resolved column if it doesn't exist
+    try {
+      this.db.exec(`
+        ALTER TABLE matches ADD COLUMN on_chain_resolved INTEGER DEFAULT 0;
+      `);
+      console.log("✅ Added on_chain_resolved column to matches table");
+    } catch (error) {
+      // Column already exists, ignore error
+    }
 
     // Create pending bets table (for confirmation flow)
     this.db.exec(`
@@ -577,7 +588,7 @@ class DatabaseService {
     result: Outcome
   ): void {
     const stmt = this.db.prepare(`
-      UPDATE matches SET 
+      UPDATE matches SET
         home_score = ?,
         away_score = ?,
         result = ?,
@@ -586,6 +597,32 @@ class DatabaseService {
       WHERE id = ?
     `);
     stmt.run(homeScore, awayScore, result, matchId);
+  }
+
+  /**
+   * Mark a match as resolved on-chain
+   * This should only be called after successful on-chain resolution
+   */
+  markMatchOnChainResolved(matchId: number): void {
+    const stmt = this.db.prepare(`
+      UPDATE matches SET on_chain_resolved = 1 WHERE id = ?
+    `);
+    stmt.run(matchId);
+  }
+
+  /**
+   * Get matches that need on-chain resolution
+   * (have result but not yet resolved on-chain)
+   */
+  getMatchesNeedingOnChainResolution(): DBMatch[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+        AND result IS NOT NULL
+        AND on_chain_resolved = 0
+      ORDER BY kickoff_time ASC
+    `);
+    return stmt.all() as DBMatch[];
   }
 
   /**

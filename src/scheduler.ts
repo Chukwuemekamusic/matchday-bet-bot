@@ -565,8 +565,11 @@ async function pollMatchResults(): Promise<void> {
 
       const dbMatch = db.getMatchByApiId(apiMatch.id!);
 
-      // Skip if not found or already resolved
-      if (!dbMatch || dbMatch.status === "FINISHED") {
+      // Skip if not found or already resolved (check result, not just status)
+      if (
+        !dbMatch ||
+        (dbMatch.status === "FINISHED" && dbMatch.result !== null)
+      ) {
         continue;
       }
 
@@ -621,6 +624,7 @@ async function pollMatchResults(): Promise<void> {
         const batchData = onChainMatches.map(({ dbMatch, outcome }) => ({
           matchId: dbMatch.on_chain_match_id,
           result: outcome,
+          dbMatchId: dbMatch.id,
         }));
 
         const result = await contractServiceInstance.batchResolveMatches(
@@ -697,6 +701,43 @@ async function pollMatchResults(): Promise<void> {
           `✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team}`
         );
         await postMatchResult(dbMatch, homeScore, awayScore);
+      }
+    }
+
+    // Retry matches that failed to resolve on-chain
+    // V3 CONTRACT: Batch resolution is now idempotent (skips already-resolved matches)
+    if (contractServiceInstance?.isContractAvailable()) {
+      const unresolvedOnChain = db.getMatchesNeedingOnChainResolution();
+
+      if (unresolvedOnChain.length > 0) {
+        console.log(
+          `🔄 Found ${unresolvedOnChain.length} matches needing on-chain resolution (retry)`
+        );
+
+        for (const match of unresolvedOnChain) {
+          console.log(
+            `   Retrying: ${match.home_team} vs ${match.away_team} (on-chain ID: ${match.on_chain_match_id})`
+          );
+        }
+
+        // Batch retry resolution (V3 contract will skip already-resolved matches)
+        const retryBatchData = unresolvedOnChain.map((match) => ({
+          matchId: match.on_chain_match_id!,
+          result: match.result!,
+          dbMatchId: match.id,
+        }));
+
+        const retryResult = await contractServiceInstance.batchResolveMatches(
+          retryBatchData
+        );
+
+        if (retryResult) {
+          console.log(
+            `✅ Successfully retried ${unresolvedOnChain.length} matches (tx: ${retryResult.txHash})`
+          );
+        } else {
+          console.error(`❌ Batch retry failed. Will try again on next poll.`);
+        }
       }
     }
 
@@ -782,7 +823,8 @@ async function resolveMatchFromAPI(dbMatch: any, apiMatch: any): Promise<void> {
   ) {
     const result = await contractServiceInstance!.resolveMatch(
       dbMatch.on_chain_match_id,
-      outcome
+      outcome,
+      dbMatch.id
     );
 
     if (result) {

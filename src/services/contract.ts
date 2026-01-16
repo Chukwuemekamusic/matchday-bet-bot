@@ -10,6 +10,7 @@ import { execute } from "viem/experimental/erc7821";
 import { base } from "viem/chains";
 import config from "../config";
 import { Outcome, ContractMatch, ContractBet } from "../types";
+import { db } from "../db";
 
 // Contract ABI (JSON format for complex types)
 export const CONTRACT_ABI = [
@@ -1113,7 +1114,17 @@ class ContractService {
       });
 
       console.log(`Close betting tx sent: ${hash}`);
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash,
+      });
+
+      // Check if transaction was successful
+      if (receipt.status === "reverted") {
+        console.error(
+          `❌ Close betting transaction reverted for match ${matchId}: ${hash}`
+        );
+        return null;
+      }
 
       return { txHash: hash };
     } catch (error) {
@@ -1124,13 +1135,17 @@ class ContractService {
 
   /**
    * Resolve a match with the final result
+   * @param onChainMatchId - The on-chain match ID
+   * @param result - The match outcome
+   * @param dbMatchId - Optional database match ID to mark as resolved
    */
   async resolveMatch(
-    matchId: number,
-    result: Outcome
+    onChainMatchId: number,
+    result: Outcome,
+    dbMatchId?: number
   ): Promise<{ txHash: string } | null> {
     try {
-      console.log(`Resolving match ${matchId} with result ${result}`);
+      console.log(`Resolving match ${onChainMatchId} with result ${result}`);
 
       const hash = await execute(this.bot.viem, {
         address: this.bot.appAddress,
@@ -1141,17 +1156,33 @@ class ContractService {
             to: this.contractAddress,
             abi: CONTRACT_ABI,
             functionName: "resolveMatch",
-            args: [BigInt(matchId), result],
+            args: [BigInt(onChainMatchId), result],
           },
         ],
       });
 
       console.log(`Resolve match tx sent: ${hash}`);
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash,
+      });
+
+      // Check if transaction was successful
+      if (receipt.status === "reverted") {
+        console.error(
+          `❌ Resolve match transaction reverted for match ${onChainMatchId}: ${hash}`
+        );
+        return null;
+      }
+
+      // Mark as on-chain resolved in database
+      if (dbMatchId) {
+        db.markMatchOnChainResolved(dbMatchId);
+        console.log(`✅ Marked match ${dbMatchId} as on-chain resolved`);
+      }
 
       return { txHash: hash };
     } catch (error) {
-      console.error(`Failed to resolve match ${matchId}`, error);
+      console.error(`Failed to resolve match ${onChainMatchId}`, error);
       return null;
     }
   }
@@ -1159,9 +1190,10 @@ class ContractService {
   /**
    * Resolve multiple matches in a single transaction (batch operation)
    * Gas-efficient for resolving multiple matches at once
+   * @param matches - Array of matches with matchId (on-chain), result, and optional dbMatchId
    */
   async batchResolveMatches(
-    matches: Array<{ matchId: number; result: Outcome }>
+    matches: Array<{ matchId: number; result: Outcome; dbMatchId?: number }>
   ): Promise<{ txHash: string } | null> {
     try {
       if (matches.length === 0) {
@@ -1192,9 +1224,31 @@ class ContractService {
       });
 
       console.log(`Batch resolve tx sent: ${hash}`);
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash,
+      });
 
-      console.log(`Successfully resolved ${matches.length} matches in batch`);
+      // Check if transaction was successful
+      if (receipt.status === "reverted") {
+        console.error(
+          `❌ Batch resolve transaction reverted for ${matches.length} matches: ${hash}`
+        );
+        console.error(
+          `   Failed matches: ${matches.map((m) => m.matchId).join(", ")}`
+        );
+        return null;
+      }
+
+      // Mark all matches as on-chain resolved in database
+      for (const match of matches) {
+        if (match.dbMatchId) {
+          db.markMatchOnChainResolved(match.dbMatchId);
+        }
+      }
+
+      console.log(
+        `✅ Successfully resolved ${matches.length} matches in batch`
+      );
       return { txHash: hash };
     } catch (error) {
       console.error(`Failed to batch resolve ${matches.length} matches`, error);
@@ -1227,7 +1281,17 @@ class ContractService {
       });
 
       console.log(`Cancel match tx sent: ${hash}`);
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash,
+      });
+
+      // Check if transaction was successful
+      if (receipt.status === "reverted") {
+        console.error(
+          `❌ Cancel match transaction reverted for match ${matchId}: ${hash}`
+        );
+        return null;
+      }
 
       return { txHash: hash };
     } catch (error) {
