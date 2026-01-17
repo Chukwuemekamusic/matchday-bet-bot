@@ -1923,7 +1923,9 @@ ${version || "❌ Failed to read"}
 • Accumulated Fees: ${accumulatedFees ? formatEth(accumulatedFees) : "?"} ETH
 
 **View on BaseScan:**
-https://basescan.org/address/${contractService.getContractAddress()}`;
+https://basescan.org/address/${contractService.getContractAddress()} \n\n
+**View on BaseScan (Implementation):**
+https://basescan.org/address/${contractService.getImplementationAddress()}`;
 
     await handler.sendMessage(channelId, message);
   } catch (error) {
