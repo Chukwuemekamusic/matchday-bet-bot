@@ -20,6 +20,10 @@ const commands = [
     name: "odds",
     description: "Show current betting odds for a match",
   },
+  {
+    name: "active",
+    description: "Show matches with active betting pools",
+  },
 
   // Betting
   {
@@ -87,6 +91,10 @@ const commands = [
   {
     name: "fetch",
     description: "Manually fetch today's matches from API",
+  },
+  {
+    name: "syncmatches",
+    description: "[Admin] Sync on-chain match IDs and fix match codes",
   },
 
   /*//////////////////////////////////////////////////////////////

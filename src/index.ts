@@ -25,6 +25,7 @@ import {
   handlePending,
   handleCancel,
   handleMatches,
+  handleActive,
   createOddsHandler,
   createMyBetsHandler,
   createClaimHandler,
@@ -71,6 +72,9 @@ bot.onSlashCommand("matches", handleMatches);
 
 // /odds - Show odds for a match
 bot.onSlashCommand("odds", createOddsHandler(handlerContext));
+
+// /active - Show matches with active betting pools
+bot.onSlashCommand("active", handleActive);
 
 // /bet - Place a bet (step 1: create pending bet)
 bot.onSlashCommand("bet", createBetHandler(handlerContext));
@@ -902,6 +906,144 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
     await handler.sendMessage(
       channelId,
       "❌ Failed to fetch matches. Check API configuration."
+    );
+  }
+});
+
+// /syncmatches - Admin command to sync on-chain match IDs and fix match codes
+bot.onSlashCommand("syncmatches", async (handler, { channelId, userId, args }) => {
+  try {
+    // Check if user is owner (admin only command)
+    const owner = await contractService.getOwner();
+    if (!owner || userId.toLowerCase() !== owner.toLowerCase()) {
+      await handler.sendMessage(
+        channelId,
+        "❌ This command is admin-only."
+      );
+      return;
+    }
+
+    // Check if this is a dry-run or actual apply
+    const shouldApply = args.includes("--apply");
+    const mode = shouldApply ? "APPLY" : "DRY RUN";
+
+    await handler.sendMessage(
+      channelId,
+      `🔍 Syncing on-chain match IDs (${mode})...\n\nChecking matches 19-25...`
+    );
+
+    // Define the range of on-chain match IDs to check
+    const onChainMatchIds = [19, 20, 21, 22, 23, 24, 25];
+    const updates: Array<{
+      onChainId: number;
+      dbMatchId: number;
+      homeTeam: string;
+      awayTeam: string;
+      dailyId: number;
+      oldMatchCode: string | null;
+      newMatchCode: string;
+    }> = [];
+
+    // Check each on-chain match
+    for (const onChainId of onChainMatchIds) {
+      const onChainMatch = await contractService.getMatch(onChainId);
+
+      if (!onChainMatch) {
+        console.log(`⚠️ On-chain match ${onChainId} not found`);
+        continue;
+      }
+
+      // Extract match details from contract
+      const homeTeam = onChainMatch.homeTeam;
+      const awayTeam = onChainMatch.awayTeam;
+      const kickoffTime = Number(onChainMatch.kickoffTime);
+
+      // Find matching DB record by team names and kickoff time
+      const allMatches = db.getTodaysMatches();
+      let bestMatch = null;
+
+      // Try to find exact match by team names (case-insensitive)
+      for (const dbMatch of allMatches) {
+        const homeMatch = dbMatch.home_team.toLowerCase().includes(homeTeam.toLowerCase()) ||
+                         homeTeam.toLowerCase().includes(dbMatch.home_team.toLowerCase());
+        const awayMatch = dbMatch.away_team.toLowerCase().includes(awayTeam.toLowerCase()) ||
+                         awayTeam.toLowerCase().includes(dbMatch.away_team.toLowerCase());
+
+        // Check if kickoff times are within 5 minutes (300 seconds)
+        const timeDiff = Math.abs(dbMatch.kickoff_time - kickoffTime);
+
+        if (homeMatch && awayMatch && timeDiff < 300) {
+          bestMatch = dbMatch;
+          break;
+        }
+      }
+
+      if (bestMatch) {
+        // Skip if daily_id is null
+        if (bestMatch.daily_id === null) {
+          console.log(`⚠️ DB match ${bestMatch.id} has no daily_id, skipping`);
+          continue;
+        }
+
+        // Generate new match code based on daily_id
+        const newMatchCode = db.generateMatchCode(bestMatch.kickoff_time, bestMatch.daily_id);
+
+        updates.push({
+          onChainId,
+          dbMatchId: bestMatch.id,
+          homeTeam: bestMatch.home_team,
+          awayTeam: bestMatch.away_team,
+          dailyId: bestMatch.daily_id,
+          oldMatchCode: bestMatch.match_code,
+          newMatchCode,
+        });
+      } else {
+        console.log(`⚠️ No DB match found for on-chain match ${onChainId}: ${homeTeam} vs ${awayTeam}`);
+      }
+    }
+
+    // Build result message
+    let message = `🔍 Syncing on-chain match IDs (${mode})\n\n`;
+
+    if (updates.length === 0) {
+      message += "No matches found to sync.";
+    } else {
+      for (const update of updates) {
+        message += `Match ${update.onChainId}: ${update.homeTeam} vs ${update.awayTeam}\n`;
+        message += `  ✅ Found DB match #${update.dbMatchId} (daily_id: ${update.dailyId})\n`;
+        message += `  → ${shouldApply ? "Set" : "Would set"} on_chain_match_id: ${update.onChainId}\n`;
+
+        if (update.oldMatchCode !== update.newMatchCode) {
+          message += `  → ${shouldApply ? "Updated" : "Would update"} match_code: ${update.oldMatchCode || "null"} → ${update.newMatchCode}\n`;
+        }
+        message += `\n`;
+      }
+
+      message += `\nSummary: ${updates.length} match${updates.length > 1 ? "es" : ""} ${shouldApply ? "updated" : "would be updated"}`;
+
+      if (!shouldApply) {
+        message += `\n\nRun \`/syncmatches --apply\` to apply changes`;
+      }
+
+      // Apply changes if --apply flag is set
+      if (shouldApply) {
+        for (const update of updates) {
+          db.setOnChainMatchId(update.dbMatchId, update.onChainId);
+          if (update.oldMatchCode !== update.newMatchCode) {
+            db.updateMatchCode(update.dbMatchId, update.newMatchCode);
+          }
+        }
+        message += `\n\n✅ Database updated successfully!`;
+        console.log(`✅ Synced ${updates.length} matches`);
+      }
+    }
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Error in /syncmatches:", error);
+    await handler.sendMessage(
+      channelId,
+      "❌ Failed to sync matches. Check logs for details."
     );
   }
 });

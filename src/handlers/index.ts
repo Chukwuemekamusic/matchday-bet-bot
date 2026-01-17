@@ -14,6 +14,7 @@ export { createBetHandler, handlePending, handleCancel } from "./betting";
 // Matches
 export {
   handleMatches,
+  handleActive,
   createOddsHandler,
   createMyBetsHandler,
 } from "./matches";

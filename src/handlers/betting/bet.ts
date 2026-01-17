@@ -21,7 +21,10 @@ import {
   parseOutcome,
   truncateAddress,
   isBettingOpen,
+  formatTime,
+  timeUntilKickoff,
 } from "../../utils/format";
+import { getCompetitionEmoji } from "../../utils/competition";
 import { Outcome } from "../../types";
 import { config } from "../../config";
 
@@ -224,9 +227,17 @@ Example: \`/bet 1 home 0.01\``,
       db.updatePendingBetInteractionId(userId, interactionId);
       console.log("💾 Pending bet saved with interaction ID:", interactionId);
 
+      // Format match details
+      const competitionEmoji = getCompetitionEmoji(match.competition_code);
+      const kickoffTime = formatTime(match.kickoff_time);
+      const countdown = timeUntilKickoff(match.kickoff_time);
+
       const message = `⚽ **Confirm Your Bet**
 
-**Match:** ${match.home_team} vs ${match.away_team}
+${competitionEmoji} **${match.competition}**
+${match.home_team} vs ${match.away_team}
+⏰ Kickoff: ${kickoffTime} (${countdown})
+
 **Your Pick:** ${predictionDisplay}
 **Stake:** ${amountStr} ETH
 ${potentialWinnings}
@@ -275,7 +286,10 @@ _This pending bet expires in 5 minutes._`;
           channelId,
           `⚽ **Bet Saved!**
 
-**Match:** ${match.home_team} vs ${match.away_team}
+${competitionEmoji} **${match.competition}**
+${match.home_team} vs ${match.away_team}
+⏰ Kickoff: ${kickoffTime} (${countdown})
+
 **Your Pick:** ${predictionDisplay}
 **Stake:** ${amountStr} ETH
 

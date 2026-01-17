@@ -313,6 +313,28 @@ class DatabaseService {
   }
 
   /**
+   * Get today's matches that have active betting pools (on-chain)
+   */
+  getActiveMatches(): DBMatch[] {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE kickoff_time >= ? AND kickoff_time < ?
+        AND on_chain_match_id IS NOT NULL
+      ORDER BY kickoff_time ASC
+    `);
+
+    return stmt.all(
+      Math.floor(today.getTime() / 1000),
+      Math.floor(tomorrow.getTime() / 1000)
+    ) as DBMatch[];
+  }
+
+  /**
    * Get all matches (for admin/migration purposes)
    */
   getAllMatches(): DBMatch[] {
@@ -468,6 +490,16 @@ class DatabaseService {
       UPDATE matches SET on_chain_match_id = ? WHERE id = ?
     `);
     stmt.run(onChainId, matchId);
+  }
+
+  /**
+   * Update match code
+   */
+  updateMatchCode(matchId: number, matchCode: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE matches SET match_code = ? WHERE id = ?
+    `);
+    stmt.run(matchCode, matchId);
   }
 
   /**

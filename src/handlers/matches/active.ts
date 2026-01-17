@@ -1,45 +1,27 @@
 /**
- * /matches command handler
- * Show today's matches
+ * /active command handler
+ * Show today's matches with active betting pools (on-chain)
  */
 
 import type { CommandHandler, CommandEventWithArgs } from "../types";
 import { db } from "../../db";
 import { formatMatchDisplay } from "../../utils/format";
-import { getCompetitionEmoji, LEAGUE_CODE_MAP } from "../../utils/competition";
+import { getCompetitionEmoji } from "../../utils/competition";
 import { getSmartThreadOpts } from "../../utils/threadRouter";
 import type { DBMatch } from "../../types";
 
-export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
+export const handleActive: CommandHandler<CommandEventWithArgs> = async (
   handler,
-  { channelId, args, threadId }
+  { channelId, threadId }
 ) => {
   const opts = getSmartThreadOpts(threadId);
-  const leagueFilter = args[0]?.toUpperCase();
 
-  let matches = db.getTodaysMatches();
-
-  if (matches.length === 0) {
-    await handler.sendMessage(
-      channelId,
-      "📅 No matches scheduled for today. Check back tomorrow!",
-      opts
-    );
-    return;
-  }
-
-  // Filter by league if specified
-  if (leagueFilter) {
-    const code = LEAGUE_CODE_MAP[leagueFilter];
-    if (code) {
-      matches = matches.filter((m) => m.competition_code === code);
-    }
-  }
+  const matches = db.getActiveMatches();
 
   if (matches.length === 0) {
     await handler.sendMessage(
       channelId,
-      `📅 No ${leagueFilter || ""} matches scheduled for today.`,
+      "📊 No active betting pools today. Be the first to place a bet using `/bet`!",
       opts
     );
     return;
@@ -64,7 +46,8 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
   });
   const formattedDate = dateFormatter.format(today);
 
-  let message = `⚽ **Matches for ${formattedDate}**\n\n`;
+  let message = `📊 **Active Betting Pools for ${formattedDate}**\n\n`;
+  message += `_${matches.length} ${matches.length === 1 ? "match" : "matches"} with active betting_\n\n`;
 
   for (const [competition, compMatches] of grouped) {
     const emoji = getCompetitionEmoji(compMatches[0].competition_code);
@@ -75,7 +58,8 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
     }
   }
 
-  message += "Use `/bet <#> <home|draw|away> <amount>` to place a bet!";
+  message += "\nUse `/bet <#> <home|draw|away> <amount>` to place a bet!\n";
+  message += "Use `/odds <#>` to see current odds for a match.";
 
   await handler.sendMessage(channelId, message, opts);
 };
