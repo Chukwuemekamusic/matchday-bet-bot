@@ -34,6 +34,7 @@ Thumbs.db
 
 # docs
 docs/
+db_commands/
 
 # SQLite
 *.db
