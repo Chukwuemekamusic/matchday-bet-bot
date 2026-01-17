@@ -44,24 +44,16 @@ class DatabaseService {
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         resolved_at INTEGER,
         posted_to_towns INTEGER DEFAULT 0,
-        on_chain_resolved INTEGER DEFAULT 0
+        on_chain_resolved INTEGER DEFAULT 0,
+        postponed_at INTEGER
       );
 
       CREATE INDEX IF NOT EXISTS idx_matches_kickoff ON matches(kickoff_time);
       CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
       CREATE INDEX IF NOT EXISTS idx_matches_api_id ON matches(api_match_id);
       CREATE INDEX IF NOT EXISTS idx_matches_daily_id ON matches(daily_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_match_code ON matches(match_code);
     `);
-
-    // Migration: Add on_chain_resolved column if it doesn't exist
-    try {
-      this.db.exec(`
-        ALTER TABLE matches ADD COLUMN on_chain_resolved INTEGER DEFAULT 0;
-      `);
-      console.log("✅ Added on_chain_resolved column to matches table");
-    } catch (error) {
-      // Column already exists, ignore error
-    }
 
     // Create pending bets table (for confirmation flow)
     this.db.exec(`
@@ -75,6 +67,7 @@ class DatabaseService {
         expires_at INTEGER NOT NULL,
         tx_hash TEXT,
         interaction_id TEXT,
+        thread_id TEXT,
         FOREIGN KEY (match_id) REFERENCES matches(id)
       );
 
@@ -127,75 +120,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_bets_match ON bets(match_id);
       CREATE INDEX IF NOT EXISTS idx_bets_wallet ON bets(wallet_address);
     `);
-
-    // Migrate existing databases: Add daily_id column if it doesn't exist
-    try {
-      this.db.exec(`ALTER TABLE matches ADD COLUMN daily_id INTEGER`);
-      console.log("✅ Migration: Added daily_id column to matches table");
-    } catch (error) {
-      // Column already exists (fresh database or already migrated)
-      // This is expected and safe to ignore
-    }
-
-    // Migrate existing databases: Add tx_hash and interaction_id columns to pending_bets
-    try {
-      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN tx_hash TEXT`);
-      console.log("✅ Migration: Added tx_hash column to pending_bets table");
-    } catch (error) {
-      // Column already exists
-    }
-
-    try {
-      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN interaction_id TEXT`);
-      console.log(
-        "✅ Migration: Added interaction_id column to pending_bets table"
-      );
-    } catch (error) {
-      // Column already exists
-    }
-
-    try {
-      this.db.exec(`ALTER TABLE pending_bets ADD COLUMN thread_id TEXT`);
-      console.log("✅ Migration: Added thread_id column to pending_bets table");
-    } catch (error) {
-      // Column already exists
-    }
-
-    // Migrate existing databases: Add match_code column if it doesn't exist
-    // This is for backward compatibility with databases created before match_code was added
-    // Note: We can't add UNIQUE constraint via ALTER TABLE on existing tables with data
-    // The uniqueness will be enforced by the index created below
-    try {
-      this.db.exec(`ALTER TABLE matches ADD COLUMN match_code TEXT`);
-      console.log("✅ Migration: Added match_code column to matches table");
-    } catch (error) {
-      // Column already exists (expected for fresh databases or already migrated)
-      // This is safe to ignore
-    }
-
-    // Create unique index for match_code (safe to run multiple times with IF NOT EXISTS)
-    // This must be AFTER the ALTER TABLE migration for existing databases
-    // Using UNIQUE index enforces uniqueness even though ALTER TABLE couldn't add UNIQUE constraint
-    try {
-      this.db.exec(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_matches_match_code ON matches(match_code)`
-      );
-    } catch (error) {
-      // Index might already exist or column doesn't exist yet
-      // This is safe to ignore
-    }
-
-    // Migrate existing matches without match codes
-    // This generates match codes for any matches that don't have them yet
-    this.migrateMatchCodes();
-
-    // Migrate existing databases: Add postponed_at column to matches
-    try {
-      this.db.exec(`ALTER TABLE matches ADD COLUMN postponed_at INTEGER`);
-      console.log("✅ Migration: Added postponed_at column to matches table");
-    } catch (error) {
-      // Column already exists
-    }
 
     console.log("Database initialized successfully");
   }
@@ -701,68 +625,6 @@ class DatabaseService {
     const month = String(date.getUTCMonth() + 1).padStart(2, "0");
     const day = String(date.getUTCDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
-  }
-
-  /**
-   * Migrate existing matches to add match codes
-   * Called during database initialization
-   */
-  private migrateMatchCodes(): void {
-    try {
-      // Check if match_code column exists by attempting to query it
-      const testStmt = this.db.prepare(`
-        SELECT match_code FROM matches LIMIT 1
-      `);
-      testStmt.get(); // This will throw if column doesn't exist
-    } catch (error) {
-      // Column doesn't exist yet, skip migration
-      // This can happen on fresh databases before the column is added
-      return;
-    }
-
-    try {
-      // Get all matches without match codes
-      const stmt = this.db.prepare(`
-        SELECT * FROM matches WHERE match_code IS NULL
-      `);
-      const matches = stmt.all() as DBMatch[];
-
-      if (matches.length === 0) {
-        return; // No matches to migrate
-      }
-
-      console.log(
-        `🔄 Migrating ${matches.length} matches to add match codes...`
-      );
-
-      for (const match of matches) {
-        // Use existing daily_id if available, otherwise use match id
-        const dailyId = match.daily_id || match.id;
-        const matchCode = this.generateMatchCode(match.kickoff_time, dailyId);
-
-        const updateStmt = this.db.prepare(`
-          UPDATE matches
-          SET match_code = ?
-          WHERE id = ?
-        `);
-
-        try {
-          updateStmt.run(matchCode, match.id);
-        } catch (error) {
-          // If match_code collision (unlikely), use match id as fallback
-          const fallbackCode = this.generateMatchCode(
-            match.kickoff_time,
-            match.id
-          );
-          updateStmt.run(fallbackCode, match.id);
-        }
-      }
-
-      console.log(`✅ Migrated ${matches.length} matches with match codes`);
-    } catch (error) {
-      console.error("Error during match code migration:", error);
-      // Don't throw - allow app to continue even if migration fails
-    }
   }
 
   // ==================== PENDING BETS ====================
