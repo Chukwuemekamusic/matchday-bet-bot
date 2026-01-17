@@ -1836,45 +1836,54 @@ Use \`/mybets\` to verify your bet was placed.`
 // ==================== MESSAGE HANDLERS ====================
 
 // Handle general messages (mentions, etc.)
-bot.onMessage(async (handler, { message, channelId, isMentioned }) => {
-  // Only respond to mentions
-  if (!isMentioned) return;
+bot.onMessage(
+  async (handler, { message, channelId, isMentioned, threadId }) => {
+    // Only respond to mentions
+    if (!isMentioned) return;
 
-  const lowerMessage = message.toLowerCase();
+    // Stay in thread if message was sent in a thread
+    const opts = threadId ? { threadId } : undefined;
 
-  if (lowerMessage.includes("hello") || lowerMessage.includes("hi")) {
+    const lowerMessage = message.toLowerCase();
+
+    if (lowerMessage.includes("hello") || lowerMessage.includes("hi")) {
+      await handler.sendMessage(
+        channelId,
+        "Hey! 👋 Ready to bet on some football? Use `/matches` to see today's games!",
+        opts
+      );
+      return;
+    }
+
+    if (lowerMessage.includes("help")) {
+      await handler.sendMessage(
+        channelId,
+        "Use `/help` to see all available commands!",
+        opts
+      );
+      return;
+    }
+
+    if (
+      lowerMessage.includes("channel id") ||
+      lowerMessage.includes("channelid")
+    ) {
+      await handler.sendMessage(
+        channelId,
+        `📍 **Channel ID:**\n\`\`\`\n${channelId}\n\`\`\`\n\nAdd this to your \`.env\` file as:\n\`DEFAULT_CHANNEL_ID=${channelId}\``,
+        opts
+      );
+      return;
+    }
+
+    // Default response
     await handler.sendMessage(
       channelId,
-      "Hey! 👋 Ready to bet on some football? Use `/matches` to see today's games!"
+      "Hey! Use `/help` to see what I can do. 🎯⚽",
+      opts
     );
-    return;
   }
-
-  if (lowerMessage.includes("help")) {
-    await handler.sendMessage(
-      channelId,
-      "Use `/help` to see all available commands!"
-    );
-    return;
-  }
-
-  if (
-    lowerMessage.includes("channel id") ||
-    lowerMessage.includes("channelid")
-  ) {
-    await handler.sendMessage(
-      channelId,
-      `📍 **Channel ID:**\n\`\`\`\n${channelId}\n\`\`\`\n\nAdd this to your \`.env\` file as:\n\`DEFAULT_CHANNEL_ID=${channelId}\``
-    );
-    return;
-  }
-
-  // Default response
-  await handler.sendMessage(
-    channelId,
-    "Hey! Use `/help` to see what I can do. 🎯⚽"
-  );
-});
+);
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -1883,25 +1892,29 @@ bot.onMessage(async (handler, { message, channelId, isMentioned }) => {
     //////////////////////////////////////////////////////////////*/
 
 // /contractinfo - Show contract version and config
-bot.onSlashCommand("contractinfo", async (handler, { channelId }) => {
-  try {
-    const [
-      version,
-      owner,
-      nextMatchId,
-      stakeLimits,
-      platformFee,
-      accumulatedFees,
-    ] = await Promise.all([
-      contractService.getVersion(),
-      contractService.getOwner(),
-      contractService.getNextMatchId(),
-      contractService.getStakeLimits(),
-      contractService.getPlatformFeeBps(),
-      contractService.getAccumulatedFees(),
-    ]);
+bot.onSlashCommand(
+  "contractinfo",
+  async (handler, { channelId, threadId, eventId }) => {
+    const opts = getThreadMessageOpts(threadId, eventId);
 
-    const message = `📋 **Contract Information**
+    try {
+      const [
+        version,
+        owner,
+        nextMatchId,
+        stakeLimits,
+        platformFee,
+        accumulatedFees,
+      ] = await Promise.all([
+        contractService.getVersion(),
+        contractService.getOwner(),
+        contractService.getNextMatchId(),
+        contractService.getStakeLimits(),
+        contractService.getPlatformFeeBps(),
+        contractService.getAccumulatedFees(),
+      ]);
+
+      const message = `📋 **Contract Information**
 
 **Contract Address:**
 \`${contractService.getContractAddress()}\`
@@ -1927,44 +1940,51 @@ https://basescan.org/address/${contractService.getContractAddress()} \n\n
 **View on BaseScan (Implementation):**
 https://basescan.org/address/${contractService.getImplementationAddress()}`;
 
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Contract info error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ Failed to fetch contract info: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
-  }
-});
-
-// /botinfo - Show bot wallet info
-bot.onSlashCommand("botinfo", async (handler, { channelId, userId }) => {
-  try {
-    // Get user's smart account address
-    const userSmartAccount = await getSmartAccountFromUserId(bot, {
-      userId: userId as `0x${string}`,
-    });
-    // Check if user is admin (by EOA or smart account)
-    const isAdminByEOA =
-      userId.toLowerCase() === config.admin.userId.toLowerCase();
-    const isAdminBySmartAccount = userSmartAccount
-      ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
-      : false;
-
-    if (!isAdminByEOA && !isAdminBySmartAccount) {
+      await handler.sendMessage(channelId, message, opts);
+    } catch (error) {
+      console.error("Contract info error:", error);
       await handler.sendMessage(
         channelId,
-        "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+        `❌ Failed to fetch contract info: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        opts
       );
-      return;
     }
-    const balance = await contractService.getBotBalance();
-    const signerAddress = contractService.getBotAddress();
-    const treasuryAddress = contractService.getBotTreasuryAddress();
+  }
+);
 
-    const message = `🤖 **Bot Wallet Information**
+// /botinfo - Show bot wallet info
+bot.onSlashCommand(
+  "botinfo",
+  async (handler, { channelId, userId, threadId, eventId }) => {
+    const opts = getThreadMessageOpts(threadId, eventId);
+
+    try {
+      // Get user's smart account address
+      const userSmartAccount = await getSmartAccountFromUserId(bot, {
+        userId: userId as `0x${string}`,
+      });
+      // Check if user is admin (by EOA or smart account)
+      const isAdminByEOA =
+        userId.toLowerCase() === config.admin.userId.toLowerCase();
+      const isAdminBySmartAccount = userSmartAccount
+        ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
+        : false;
+
+      if (!isAdminByEOA && !isAdminBySmartAccount) {
+        await handler.sendMessage(
+          channelId,
+          "❌ **Access Denied**\n\nThis command is only available to the bot administrator.",
+          opts
+        );
+        return;
+      }
+      const balance = await contractService.getBotBalance();
+      const signerAddress = contractService.getBotAddress();
+      const treasuryAddress = contractService.getBotTreasuryAddress();
+
+      const message = `🤖 **Bot Wallet Information**
 
 **Signer Address (EOA):**
 \`${signerAddress}\`
@@ -1983,26 +2003,32 @@ ${
     : ""
 }`;
 
-    await handler.sendMessage(channelId, message);
-  } catch (error) {
-    console.error("Bot info error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ Failed to fetch bot info: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`
-    );
-  }
-});
-
-// /userHasBet - Test if user has bet on a match
-bot.onSlashCommand("userHasBet", async (handler, { channelId, args }) => {
-  try {
-    // Validate arguments
-    if (!args || args.length < 2) {
+      await handler.sendMessage(channelId, message, opts);
+    } catch (error) {
+      console.error("Bot info error:", error);
       await handler.sendMessage(
         channelId,
-        `❌ **Missing Arguments**
+        `❌ Failed to fetch bot info: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        opts
+      );
+    }
+  }
+);
+
+// /userHasBet - Test if user has bet on a match
+bot.onSlashCommand(
+  "userHasBet",
+  async (handler, { channelId, args, threadId, eventId }) => {
+    const opts = getThreadMessageOpts(threadId, eventId);
+
+    try {
+      // Validate arguments
+      if (!args || args.length < 2) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **Missing Arguments**
 
 **Usage:** \`/userHasBet <match#> <userAddress>\`
 
@@ -2010,81 +2036,85 @@ bot.onSlashCommand("userHasBet", async (handler, { channelId, args }) => {
 
 **Parameters:**
 • \`match#\` - The daily match number from \`/matches\` (e.g., 1, 2, 3)
-• \`userAddress\` - The user's Ethereum address (0x...)`
-      );
-      return;
-    }
-
-    const matchNumStr = args[0].trim();
-    const userAddress = args[1].trim();
-
-    // Validate match number
-    if (!/^\d+$/.test(matchNumStr)) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Invalid Match Number**
-"\`${matchNumStr}\`" is not a valid number.`
-      );
-      return;
-    }
-
-    const matchNum = parseInt(matchNumStr);
-
-    // Validate user address format
-    if (!/^0x[a-fA-F0-9]{40}$/.test(userAddress)) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Invalid User Address**
-"\`${userAddress}\`" is not a valid Ethereum address.
-Expected format: \`0x...\` (42 characters)`
-      );
-      return;
-    }
-
-    // Use match lookup service
-    const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
-    if (!lookupResult.success) {
-      await handler.sendMessage(channelId, lookupResult.errorMessage!);
-      return;
-    }
-
-    const match = lookupResult.match!;
-
-    // Check if match is on-chain
-    if (!match.on_chain_match_id) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Match Not On-Chain**
-Match #${matchNum} (${match.home_team} vs ${match.away_team}) hasn't been created on-chain yet.
-No bets can exist for this match.`
-      );
-      return;
-    }
-
-    // Try to get smart account address (in case they provided EOA)
-    let addressToCheck = userAddress as `0x${string}`;
-    try {
-      const smartAccount = await getSmartAccountFromUserId(bot, {
-        userId: userAddress as `0x${string}`,
-      });
-      if (smartAccount) {
-        addressToCheck = smartAccount;
-        console.log(
-          `[/userHasBet] Converted EOA ${userAddress} to smart account ${addressToCheck}`
+• \`userAddress\` - The user's Ethereum address (0x...)`,
+          opts
         );
+        return;
       }
-    } catch (error) {
-      // If it fails, assume they provided the smart account directly
-      console.log(`[/userHasBet] Using address as provided: ${userAddress}`);
-    }
 
-    const hasBet = await contractService.hasUserBet(
-      match.on_chain_match_id,
-      addressToCheck
-    );
-    await handler.sendMessage(
-      channelId,
-      `🔍 **Bet Check Result**
+      const matchNumStr = args[0].trim();
+      const userAddress = args[1].trim();
+
+      // Validate match number
+      if (!/^\d+$/.test(matchNumStr)) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **Invalid Match Number**
+"\`${matchNumStr}\`" is not a valid number.`,
+          opts
+        );
+        return;
+      }
+
+      const matchNum = parseInt(matchNumStr);
+
+      // Validate user address format
+      if (!/^0x[a-fA-F0-9]{40}$/.test(userAddress)) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **Invalid User Address**
+"\`${userAddress}\`" is not a valid Ethereum address.
+Expected format: \`0x...\` (42 characters)`,
+          opts
+        );
+        return;
+      }
+
+      // Use match lookup service
+      const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
+      if (!lookupResult.success) {
+        await handler.sendMessage(channelId, lookupResult.errorMessage!, opts);
+        return;
+      }
+
+      const match = lookupResult.match!;
+
+      // Check if match is on-chain
+      if (!match.on_chain_match_id) {
+        await handler.sendMessage(
+          channelId,
+          `❌ **Match Not On-Chain**
+Match #${matchNum} (${match.home_team} vs ${match.away_team}) hasn't been created on-chain yet.
+No bets can exist for this match.`,
+          opts
+        );
+        return;
+      }
+
+      // Try to get smart account address (in case they provided EOA)
+      let addressToCheck = userAddress as `0x${string}`;
+      try {
+        const smartAccount = await getSmartAccountFromUserId(bot, {
+          userId: userAddress as `0x${string}`,
+        });
+        if (smartAccount) {
+          addressToCheck = smartAccount;
+          console.log(
+            `[/userHasBet] Converted EOA ${userAddress} to smart account ${addressToCheck}`
+          );
+        }
+      } catch (error) {
+        // If it fails, assume they provided the smart account directly
+        console.log(`[/userHasBet] Using address as provided: ${userAddress}`);
+      }
+
+      const hasBet = await contractService.hasUserBet(
+        match.on_chain_match_id,
+        addressToCheck
+      );
+      await handler.sendMessage(
+        channelId,
+        `🔍 **Bet Check Result**
 
 **Match #${matchNum}:** ${match.home_team} vs ${match.away_team}
 **On-Chain Match ID:** ${match.on_chain_match_id}
@@ -2094,18 +2124,21 @@ ${
     ? `**Smart Account:** \`${truncateAddress(addressToCheck)}\`\n`
     : ""
 }
-**Has Bet:** ${hasBet ? "✅ YES" : "❌ NO"}`
-    );
-  } catch (error) {
-    console.error("User has bet error:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ **User Has Bet Test Failed**
+**Has Bet:** ${hasBet ? "✅ YES" : "❌ NO"}`,
+        opts
+      );
+    } catch (error) {
+      console.error("User has bet error:", error);
+      await handler.sendMessage(
+        channelId,
+        `❌ **User Has Bet Test Failed**
 
-**Error:** ${error instanceof Error ? error.message : "Unknown error"}`
-    );
+**Error:** ${error instanceof Error ? error.message : "Unknown error"}`,
+        opts
+      );
+    }
   }
-});
+);
 
 // /resolve - Admin-only manual match resolution
 bot.onSlashCommand("resolve", async (handler, { channelId, userId, args }) => {
