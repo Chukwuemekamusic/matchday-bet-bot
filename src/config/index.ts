@@ -25,6 +25,13 @@ export const config = {
     ),
   },
 
+  implementation: {
+    address: optionalEnv(
+      "IMPLEMENTATION",
+      "0x626A22ecFaD621e62e1c7829e256e1C650533028"
+    ),
+  },
+
   // Base Chain RPC
   chain: {
     rpcUrl: optionalEnv("BASE_RPC_URL", "https://mainnet.base.org"),

@@ -1,5 +1,4 @@
 import { makeTownsBot, getSmartAccountFromUserId } from "@towns-protocol/bot";
-import { hexToBytes } from "viem";
 import commands from "./commands";
 import { db } from "./db";
 import { ContractService, CONTRACT_ABI } from "./services/contract";
@@ -20,7 +19,6 @@ import { config } from "./config";
 import { startScheduler } from "./scheduler";
 import { getLinkedWallets } from "./utils/wallet";
 import { getThreadMessageOpts } from "./utils/threadRouter";
-import { retryWithBackoff } from "./utils/retry";
 import {
   handleHelp,
   createBetHandler,
@@ -1116,30 +1114,23 @@ bot.onInteractionResponse(async (handler, event) => {
 
           // Encode threadId in transaction ID for later retrieval
           const txId = `tx-${onChainMatchId}-${userId.slice(0, 8)}-${
-            threadId || "none"
+            opts?.threadId || "none"
           }`;
 
-          // Send transaction request to user
-          await handler.sendInteractionRequest(
+          // Send transaction request to user using service
+          await interactionService.sendTransactionInteraction(
+            handler,
             channelId,
+            userId,
             {
-              case: "transaction",
-              value: {
-                id: txId,
-                title: `Bet on ${match.home_team} vs ${match.away_team}`,
-                content: {
-                  case: "evm",
-                  value: {
-                    chainId: "8453", // Base mainnet
-                    to: contractService.getContractAddress(),
-                    value: amount.toString(),
-                    data: calldata,
-                  },
-                },
-              },
-            } as any, // Type assertion for complex protobuf types
-            hexToBytes(userId as `0x${string}`), // recipient
-            opts // threading options
+              id: txId,
+              title: `Bet on ${match.home_team} vs ${match.away_team}`,
+              chainId: "8453", // Base mainnet
+              to: contractService.getContractAddress(),
+              value: amount.toString(),
+              data: calldata,
+            },
+            opts?.threadId
           );
 
           await handler.sendMessage(
@@ -1296,27 +1287,20 @@ bot.onInteractionResponse(async (handler, event) => {
           console.log("  - Using threading opts:", opts);
 
           try {
-            // Send transaction request to user
-            await handler.sendInteractionRequest(
+            // Send transaction request to user using service
+            await interactionService.sendTransactionInteraction(
+              handler,
               channelId,
+              userId,
               {
-                case: "transaction",
-                value: {
-                  id: txId,
-                  title: `Claim Winnings: ${match.home_team} vs ${match.away_team}`,
-                  content: {
-                    case: "evm",
-                    value: {
-                      chainId: "8453", // Base mainnet
-                      to: contractAddress,
-                      value: "0", // No ETH sent for claims
-                      data: calldata,
-                    },
-                  },
-                },
-              } as any,
-              hexToBytes(userId as `0x${string}`),
-              opts // Use threading options
+                id: txId,
+                title: `Claim Winnings: ${match.home_team} vs ${match.away_team}`,
+                chainId: "8453", // Base mainnet
+                to: contractAddress,
+                value: "0", // No ETH sent for claims
+                data: calldata,
+              },
+              opts?.threadId
             );
 
             console.log(
@@ -1431,29 +1415,22 @@ bot.onInteractionResponse(async (handler, event) => {
           const txId = `refund-tx-${match.on_chain_match_id}-${userId.slice(
             0,
             8
-          )}-${threadId || "none"}`;
+          )}-${opts?.threadId || "none"}`;
 
-          // Send transaction request to user
-          await handler.sendInteractionRequest(
+          // Send transaction request to user using service
+          await interactionService.sendTransactionInteraction(
+            handler,
             channelId,
+            userId,
             {
-              case: "transaction",
-              value: {
-                id: txId,
-                title: `Claim Refund: ${match.home_team} vs ${match.away_team}`,
-                content: {
-                  case: "evm",
-                  value: {
-                    chainId: "8453", // Base mainnet
-                    to: contractService.getContractAddress(),
-                    value: "0", // No ETH sent for refunds
-                    data: calldata,
-                  },
-                },
-              },
-            } as any,
-            hexToBytes(userId as `0x${string}`),
-            opts
+              id: txId,
+              title: `Claim Refund: ${match.home_team} vs ${match.away_team}`,
+              chainId: "8453", // Base mainnet
+              to: contractService.getContractAddress(),
+              value: "0", // No ETH sent for refunds
+              data: calldata,
+            },
+            opts?.threadId
           );
 
           await handler.sendMessage(
@@ -1928,6 +1905,9 @@ bot.onSlashCommand("contractinfo", async (handler, { channelId }) => {
 
 **Contract Address:**
 \`${contractService.getContractAddress()}\`
+
+**Implementation Address:**
+\`${contractService.getImplementationAddress()}\`
 
 **Version:**
 ${version || "❌ Failed to read"}

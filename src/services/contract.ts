@@ -1300,53 +1300,6 @@ class ContractService {
     }
   }
 
-  // ==================== EVENT POLLING ====================
-  // NOTE: Event polling via RPC is currently disabled due to rate limits on free tier.
-  // The bot now uses transaction response handling in onInteractionResponse for instant confirmations.
-  // This method is reserved for future subgraph integration, which will provide efficient
-  // historical event queries without RPC limitations.
-
-  /**
-   * Get recent BetPlaced events
-   * Polls for events from a specific block range
-   *
-   * @deprecated Currently unused. Reserved for future subgraph integration.
-   */
-  async getRecentBetEvents(
-    fromBlock: bigint,
-    toBlock: bigint
-  ): Promise<
-    Array<{
-      matchId: number;
-      user: string;
-      prediction: Outcome;
-      amount: bigint;
-      txHash: string;
-      blockNumber: bigint;
-    }>
-  > {
-    try {
-      const logs = await this.publicClient.getLogs({
-        address: this.contractAddress,
-        event: CONTRACT_ABI.find((item) => item.name === "BetPlaced")!,
-        fromBlock,
-        toBlock,
-      });
-
-      return logs.map((log) => ({
-        matchId: Number(log.args.matchId),
-        user: log.args.bettor as string,
-        prediction: log.args.prediction as Outcome,
-        amount: log.args.amount as bigint,
-        txHash: log.transactionHash,
-        blockNumber: log.blockNumber,
-      }));
-    } catch (error) {
-      console.error("Failed to fetch BetPlaced events", error);
-      return [];
-    }
-  }
-
   // ==================== HELPER FUNCTIONS ====================
 
   /**
@@ -1489,6 +1442,13 @@ class ContractService {
    */
   getContractAddress(): string {
     return config.contract.address;
+  }
+
+  /**
+   * Get contract address
+   */
+  getImplementationAddress(): string {
+    return config.implementation.address;
   }
 }
 

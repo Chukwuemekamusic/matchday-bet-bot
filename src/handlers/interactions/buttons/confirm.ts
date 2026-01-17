@@ -137,7 +137,7 @@ export const handleConfirmButton: ButtonHandler = async (
 
   // Generate transaction ID
   const txId = `tx-${onChainMatchId}-${userId.slice(0, 8)}-${
-    threadId || "none"
+    opts?.threadId || "none"
   }`;
 
   // Send transaction request to user
@@ -153,7 +153,7 @@ export const handleConfirmButton: ButtonHandler = async (
       value: amount.toString(),
       data: calldata,
     },
-    threadId
+    opts?.threadId
   );
 
   await handler.sendMessage(
