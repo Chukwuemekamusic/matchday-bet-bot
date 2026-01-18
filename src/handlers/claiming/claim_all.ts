@@ -1,7 +1,6 @@
 /**
  * /claim_all command handler
- * Lists all unclaimed winnings and prompts user to claim them individually
- * Note: Batch claiming in a single transaction is a future enhancement
+ * Guides user through claiming all eligible matches (wallet by wallet)
  */
 
 import { getSmartAccountFromUserId } from "@towns-protocol/bot";
@@ -11,7 +10,8 @@ import type {
   HandlerContext,
 } from "../types";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
-import { db } from "../../db";
+import { getLinkedWalletsExcludingSmartAccount } from "../../utils/wallet";
+import { interactionService } from "../../services/interactions";
 
 export const createClaimAllHandler = (
   context: HandlerContext
@@ -20,119 +20,92 @@ export const createClaimAllHandler = (
     const opts = getThreadMessageOpts(threadId, eventId);
 
     try {
-      // Check if contract is available
       if (!context.contractService.isContractAvailable()) {
         await handler.sendMessage(
           channelId,
-          "❌ Smart contract is not yet deployed. Please contact the admin.",
+          "❌ Smart contract is not available.",
           opts
         );
         return;
       }
 
-      // Get all claimable bets for the user
-      const claimableBets = db.getClaimableBets(userId);
+      // Collect wallets
+      const wallets: string[] = [];
 
-      if (claimableBets.length === 0) {
-        await handler.sendMessage(
-          channelId,
-          `📭 **No Unclaimed Winnings**
-
-You don't have any unclaimed winnings at the moment.
-
-Use \`/matches\` to see today's matches and place new bets!`,
-          opts
-        );
-        return;
-      }
-
-      // Get wallet address
-      const walletAddress = await getSmartAccountFromUserId(context.bot, {
+      const smartWallet = await getSmartAccountFromUserId(context.bot, {
         userId: userId as `0x${string}`,
       });
 
-      if (!walletAddress) {
-        await handler.sendMessage(
-          channelId,
-          "❌ Couldn't retrieve your wallet address. Please try again.",
-          opts
-        );
-        return;
-      }
+      if (smartWallet) wallets.push(smartWallet);
 
-      // Filter for actual claimable bets and collect match IDs
-      const claimableMatches: Array<{
-        matchId: number;
-        onChainMatchId: number;
-        homeTeam: string;
-        awayTeam: string;
-      }> = [];
+      const linkedWallets = await getLinkedWalletsExcludingSmartAccount(
+        context.bot,
+        userId as `0x${string}`
+      );
 
-      for (const bet of claimableBets) {
-        try {
-          const onChainBet = await context.contractService.getUserBet(
-            bet.on_chain_match_id,
-            walletAddress
-          );
+      wallets.push(...linkedWallets);
 
-          if (onChainBet && onChainBet.amount > 0n && !onChainBet.claimed) {
-            claimableMatches.push({
-              matchId: bet.match_id,
-              onChainMatchId: bet.on_chain_match_id,
-              homeTeam: bet.home_team,
-              awayTeam: bet.away_team,
-            });
-          }
-        } catch (error) {
-          console.error(
-            `Error checking claim status for match ${bet.match_id}:`,
-            error
-          );
+      // Fetch claimables
+      const walletClaims = [];
+
+      for (const wallet of wallets) {
+        const res = await context.subgraphService.getUserClaimable(wallet);
+
+        if (res.data.winnings.length === 0 && res.data.refunds.length === 0) {
+          continue;
         }
+
+        walletClaims.push({
+          wallet,
+          winnings: res.data.winnings,
+          refunds: res.data.refunds,
+        });
       }
 
-      if (claimableMatches.length === 0) {
+      if (walletClaims.length === 0) {
         await handler.sendMessage(
           channelId,
-          `📭 **No Claimable Matches**
-
-All your winnings may have already been claimed.
-
-Use \`/stats\` to see your betting history.`,
+          `📭 You have no claimable matches across your wallets.`,
           opts
         );
         return;
       }
 
-      // For now, inform user about individual claims
-      // Future enhancement: batch claims in one transaction
-      let message = `💰 **Claim All Winnings**\n\n`;
-      message += `You have **${claimableMatches.length}** match${
-        claimableMatches.length !== 1 ? "es" : ""
-      } with unclaimed winnings:\n\n`;
+      // Build summary
+      let message = `💰 **Claim All – Wallet Summary**\n\n`;
+      message += `You have claimable matches across **${walletClaims.length} wallet(s)**.\n\n`;
 
-      for (let i = 0; i < claimableMatches.length; i++) {
-        const match = claimableMatches[i];
-        message += `${i + 1}. ${match.homeTeam} vs ${match.awayTeam}\n`;
+      for (const wc of walletClaims) {
+        message += `🔗 \`${wc.wallet.slice(0, 6)}...${wc.wallet.slice(-4)}\`\n`;
+        message += `• Winnings: ${wc.winnings.length}\n`;
+        message += `• Refunds: ${wc.refunds.length}\n\n`;
       }
 
-      message += `\n⚠️ **Note:** You'll need to sign ${
-        claimableMatches.length
-      } separate transaction${claimableMatches.length !== 1 ? "s" : ""}.\n\n`;
-      message += `**Options:**\n`;
-      message += `• Use \`/claim <match #>\` to claim from specific matches\n`;
-      message += `• React with 👍 below to proceed with claiming all\n\n`;
-      message += `_Batch claiming in a single transaction is coming soon!_`;
+      message += `⚠️ Claims must be signed **per wallet**.\n`;
+      message += `You'll be prompted to confirm each wallet separately.\n\n`;
+      message += `Ready to proceed?`;
 
-      await handler.sendMessage(channelId, message, opts);
-
-      // Note: Full implementation would listen for reaction and send all transactions
-      // For now, user should use /claim individually or we can add confirmation flow
-    } catch (error) {
-      console.error("Error in /claim_all command:", error);
+      // Interaction instead of auto-claim
+      await interactionService.sendFormInteraction(
+        handler,
+        channelId,
+        userId,
+        {
+          id: `claim-all-${userId}`,
+          title: "Claim All",
+          content: message,
+          buttons: [
+            { id: "claim-all-confirm", label: "Proceed", style: 1 },
+            { id: "claim-all-cancel", label: "Cancel", style: 2 },
+          ],
+        },
+        opts?.threadId
+      );
+    } catch (err) {
+      console.error("Error in /claim_all:", err);
       await handler.sendMessage(
         channelId,
-        "❌ An error occurred while processing your claim request. Please try again or contact support.",
+        "❌ Failed to prepare claim-all. Please try again.",
         opts
       );
     }
