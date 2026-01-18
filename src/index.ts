@@ -17,7 +17,7 @@ import {
 import { DBMatch, ContractBet } from "./types";
 import { config } from "./config";
 import { startScheduler } from "./scheduler";
-import { getLinkedWallets } from "./utils/wallet";
+import { getLinkedWallets, getLinkedWalletsExcludingSmartAccount } from "./utils/wallet";
 import { getThreadMessageOpts } from "./utils/threadRouter";
 import {
   handleHelp,
@@ -1542,6 +1542,7 @@ bot.onInteractionResponse(async (handler, event) => {
                 to: contractAddress,
                 value: "0", // No ETH sent for claims
                 data: calldata,
+                signerWallet: userBet.wallet_address, // Pre-select wallet that placed the bet
               },
               opts?.threadId
             );
@@ -1577,6 +1578,149 @@ bot.onInteractionResponse(async (handler, event) => {
         // Handle claim cancel button
         if (component.id === "claim-cancel") {
           await handler.sendMessage(channelId, "✅ Claim cancelled.", opts);
+          return;
+        }
+
+        // Handle claim-all confirm button
+        if (component.id === "claim-all-confirm") {
+          console.log("🔍 [CLAIM-ALL-CONFIRM] Button clicked");
+
+          try {
+            // Collect all user wallets
+            const wallets: string[] = [];
+
+            const smartWallet = await getSmartAccountFromUserId(bot, {
+              userId: userId as `0x${string}`,
+            });
+
+            if (smartWallet) wallets.push(smartWallet);
+
+            const linkedWallets = await getLinkedWalletsExcludingSmartAccount(
+              bot,
+              userId as `0x${string}`
+            );
+
+            wallets.push(...linkedWallets);
+
+            // Fetch claimable matches for each wallet
+            const walletClaims: Array<{
+              wallet: string;
+              winningMatchIds: number[];
+              refundMatchIds: number[];
+            }> = [];
+
+            for (const wallet of wallets) {
+              const res = await subgraphService.getUserClaimable(wallet);
+
+              const winningMatchIds = res.data.winnings.map((w) => w.matchId);
+              const refundMatchIds = res.data.refunds.map((r) => r.matchId);
+
+              if (winningMatchIds.length === 0 && refundMatchIds.length === 0) {
+                continue;
+              }
+
+              walletClaims.push({
+                wallet,
+                winningMatchIds,
+                refundMatchIds,
+              });
+            }
+
+            if (walletClaims.length === 0) {
+              await handler.sendMessage(
+                channelId,
+                "📭 No claimable matches found.",
+                opts
+              );
+              return;
+            }
+
+            // Process each wallet and send transaction requests
+            let transactionsSent = 0;
+
+            for (const claim of walletClaims) {
+              const walletDisplay = truncateAddress(claim.wallet);
+
+              // Send winnings claim if any
+              if (claim.winningMatchIds.length > 0) {
+                const calldata = contractService.encodeBatchClaimWinningsCall(
+                  claim.winningMatchIds
+                );
+
+                const txId = `claim-all-win-${userId.slice(0, 8)}-${Date.now()}`;
+
+                await interactionService.sendTransactionInteraction(
+                  handler,
+                  channelId,
+                  userId,
+                  {
+                    id: txId,
+                    title: `Claim ${claim.winningMatchIds.length} Winning(s) - ${walletDisplay}`,
+                    chainId: "8453",
+                    to: contractService.getContractAddress(),
+                    value: "0",
+                    data: calldata,
+                    signerWallet: claim.wallet, // Pre-select the wallet
+                  },
+                  opts?.threadId
+                );
+
+                transactionsSent++;
+              }
+
+              // Send refunds claim if any
+              if (claim.refundMatchIds.length > 0) {
+                const calldata = contractService.encodeBatchClaimRefundsCall(
+                  claim.refundMatchIds
+                );
+
+                const txId = `claim-all-ref-${userId.slice(0, 8)}-${Date.now()}`;
+
+                await interactionService.sendTransactionInteraction(
+                  handler,
+                  channelId,
+                  userId,
+                  {
+                    id: txId,
+                    title: `Claim ${claim.refundMatchIds.length} Refund(s) - ${walletDisplay}`,
+                    chainId: "8453",
+                    to: contractService.getContractAddress(),
+                    value: "0",
+                    data: calldata,
+                    signerWallet: claim.wallet, // Pre-select the wallet
+                  },
+                  opts?.threadId
+                );
+
+                transactionsSent++;
+              }
+            }
+
+            // Send confirmation message
+            await handler.sendMessage(
+              channelId,
+              `✅ **${transactionsSent} Transaction Request(s) Sent!**\n\nPlease sign each transaction with the correct wallet. The wallet will be pre-selected for you.\n\n_I'll confirm once the transactions are mined._`,
+              opts
+            );
+
+            console.log(
+              `✅ [CLAIM-ALL-CONFIRM] Sent ${transactionsSent} transaction requests`
+            );
+          } catch (error) {
+            console.error("[CLAIM-ALL-CONFIRM] Error:", error);
+            await handler.sendMessage(
+              channelId,
+              "❌ Failed to process claim-all. Please try again or use `/claim` for individual matches.",
+              opts
+            );
+          }
+
+          return;
+        }
+
+        // Handle claim-all cancel button
+        if (component.id === "claim-all-cancel") {
+          await handler.sendMessage(channelId, "✅ Claim-all cancelled.", opts);
           return;
         }
 
@@ -2048,16 +2192,39 @@ Your refund was successful! Check your wallet.
             console.log(`✅ Bet confirmed for ${userId}: ${txHash}`);
           }
         } else {
-          await handler.sendMessage(
-            channelId,
-            `❌ **Transaction Failed**
+          // Transaction failed - provide context-specific error message
+          const txId = txResponse.requestId || "";
+          const isClaimTx = txId.startsWith("claim-tx-") || txId.startsWith("claim-all-");
+          const isRefundTx = txId.startsWith("refund-tx-");
 
-Your bet was not placed. The transaction was reverted.
+          let errorMessage = `❌ **Transaction Failed**\n\n`;
 
-🔗 [View on Basescan](https://basescan.org/tx/${txHash})`
-          );
+          if (isClaimTx) {
+            errorMessage += `Your claim was not processed. The transaction was reverted.\n\n`;
+            errorMessage += `💡 **Possible reasons:**\n`;
+            errorMessage += `• You may have signed with the wrong wallet\n`;
+            errorMessage += `• The bet was already claimed\n`;
+            errorMessage += `• The match is not yet resolved\n\n`;
+            errorMessage += `Try running \`/claimable\` to see which wallet was used for each bet.`;
+          } else if (isRefundTx) {
+            errorMessage += `Your refund was not processed. The transaction was reverted.\n\n`;
+            errorMessage += `💡 **Possible reasons:**\n`;
+            errorMessage += `• You may have signed with the wrong wallet\n`;
+            errorMessage += `• The refund was already claimed\n`;
+            errorMessage += `• The match is not eligible for refunds\n\n`;
+            errorMessage += `Try running \`/claimable\` to see which wallet was used for each bet.`;
+          } else {
+            errorMessage += `Your bet was not placed. The transaction was reverted.`;
+          }
 
-          console.log(`❌ Bet transaction failed for ${userId}: ${txHash}`);
+          errorMessage += `\n\n🔗 [View on Basescan](https://basescan.org/tx/${txHash})`;
+
+          await handler.sendMessage(channelId, errorMessage, {
+            ...(threadId && { threadId }),
+          });
+
+          const txType = isClaimTx ? "Claim" : isRefundTx ? "Refund" : "Bet";
+          console.log(`❌ ${txType} transaction failed for ${userId}: ${txHash}`);
         }
       } catch (error) {
         console.error("Failed to wait for transaction:", error);

@@ -1339,6 +1339,30 @@ class ContractService {
   }
 
   /**
+   * Generate calldata for batch claim winnings
+   * Uses the contract's batchClaimWinnings function for multiple claims in one transaction
+   */
+  encodeBatchClaimWinningsCall(matchIds: number[]): `0x${string}` {
+    return encodeFunctionData({
+      abi: CONTRACT_ABI,
+      functionName: "batchClaimWinnings",
+      args: [matchIds.map((id) => BigInt(id))],
+    });
+  }
+
+  /**
+   * Generate calldata for batch claim refunds
+   * Uses the contract's batchClaimRefunds function for multiple refunds in one transaction
+   */
+  encodeBatchClaimRefundsCall(matchIds: number[]): `0x${string}` {
+    return encodeFunctionData({
+      abi: CONTRACT_ABI,
+      functionName: "batchClaimRefunds",
+      args: [matchIds.map((id) => BigInt(id))],
+    });
+  }
+
+  /**
    * Generate calldata for claimRefund (for user to sign)
    */
   encodeClaimRefund(matchId: number): `0x${string}` {

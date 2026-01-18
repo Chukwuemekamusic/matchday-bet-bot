@@ -56,6 +56,7 @@ export interface TransactionInteractionConfig {
   to: string;
   value: string;
   data: string;
+  signerWallet?: string; // Optional wallet address to pre-select for signing
 }
 
 export class InteractionService {
@@ -194,6 +195,7 @@ export class InteractionService {
               to: config.to,
               value: config.value,
               data: config.data,
+              ...(config.signerWallet && { signerWallet: config.signerWallet }),
             },
           },
         },

@@ -281,6 +281,14 @@ Ready to claim your refund?`;
 Ready to claim your winnings?`;
       }
 
+      // Add wallet guidance message
+      const walletInfo =
+        smartAccount && walletAddress.toLowerCase() === smartAccount.toLowerCase()
+          ? "your **Towns smart account**"
+          : `your **linked wallet** (${truncateAddress(walletAddress)})`;
+
+      message += `\n\n📝 **Important:** You placed this bet with ${walletInfo}. Please sign the transaction with the same wallet.`;
+
       // Send interactive message with buttons using service
       await interactionService.sendFormInteraction(
         handler,
