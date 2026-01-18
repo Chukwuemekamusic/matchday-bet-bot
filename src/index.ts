@@ -856,9 +856,27 @@ bot.onSlashCommand("migrate", async (handler, { channelId, userId }) => {
 });
 
 // /fetch - Admin command to manually fetch matches
-bot.onSlashCommand("fetch", async (handler, { channelId }) => {
+bot.onSlashCommand("fetch", async (handler, { channelId, args }) => {
   try {
-    const matches = await footballApi.getTodaysMatches();
+    // Parse date argument if provided (format: YYYY-MM-DD)
+    let targetDate: string;
+    let matches: any[];
+
+    if (args.length > 0) {
+      targetDate = args[0];
+      // Validate date format (basic check)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        await handler.sendMessage(
+          channelId,
+          "❌ Invalid date format. Use YYYY-MM-DD (e.g., 2026-01-17)"
+        );
+        return;
+      }
+      matches = await footballApi.getMatchesByDate(targetDate);
+    } else {
+      targetDate = new Date().toISOString().split("T")[0];
+      matches = await footballApi.getTodaysMatches();
+    }
 
     let newCount = 0;
     let skippedCount = 0;
@@ -898,7 +916,7 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
 
     await handler.sendMessage(
       channelId,
-      `✅ Fetched ${matches.length} matches (${newCount} new${
+      `✅ Fetched ${matches.length} matches for ${targetDate} (${newCount} new${
         skippedCount > 0 ? `, ${skippedCount} skipped` : ""
       })`
     );
@@ -1055,6 +1073,78 @@ bot.onSlashCommand("syncmatches", async (handler, { channelId, userId, args }) =
     await handler.sendMessage(
       channelId,
       "❌ Failed to sync matches. Check logs for details."
+    );
+  }
+});
+
+// /dbcheck - Admin command to check database connectivity
+bot.onSlashCommand("dbcheck", async (handler, { channelId, userId }) => {
+  try {
+    // Get user's smart account address
+    const userSmartAccount = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+
+    // Check if user is admin (by EOA or smart account)
+    const isAdminByEOA =
+      userId.toLowerCase() === config.admin.userId.toLowerCase();
+    const isAdminBySmartAccount = userSmartAccount
+      ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
+      : false;
+
+    if (!isAdminByEOA && !isAdminBySmartAccount) {
+      await handler.sendMessage(
+        channelId,
+        "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+      );
+      return;
+    }
+
+    // Get database stats
+    const todaysMatches = db.getTodaysMatches();
+    const recentMatches = db.getRecentMatches(7);
+    const allMatches = db.getAllMatches();
+    const onChainMatches = db.getAllOnChainMatches();
+
+    // Get date range
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split("T")[0];
+
+    // Build message
+    let message = "🔍 **Database Health Check**\n\n";
+    message += `📊 **Database Path:** \`${config.database.path}\`\n\n`;
+    message += `📅 **Match Counts:**\n`;
+    message += `  • Today (${today}): ${todaysMatches.length} matches\n`;
+    message += `  • Last 7 days (${sevenDaysAgo} to ${today}): ${recentMatches.length} matches\n`;
+    message += `  • Total in DB: ${allMatches.length} matches\n`;
+    message += `  • On-chain linked: ${onChainMatches.length} matches\n\n`;
+
+    // Show sample of recent matches if any
+    if (recentMatches.length > 0) {
+      message += `📋 **Recent Matches (Last 3):**\n`;
+      for (const match of recentMatches.slice(0, 3)) {
+        const kickoffDate = new Date(match.kickoff_time * 1000)
+          .toISOString()
+          .split("T")[0];
+        message += `  • #${match.daily_id || "?"} ${match.home_team} vs ${match.away_team}\n`;
+        message += `    Date: ${kickoffDate}, On-chain ID: ${match.on_chain_match_id || "null"}\n`;
+      }
+    } else {
+      message += `⚠️ **No recent matches found in database**\n`;
+      message += `Try running \`/fetch YYYY-MM-DD\` to populate the database.\n`;
+    }
+
+    message += `\n✅ Database is accessible and responding.`;
+
+    await handler.sendMessage(channelId, message);
+  } catch (error) {
+    console.error("Error in /dbcheck:", error);
+    await handler.sendMessage(
+      channelId,
+      `❌ **Database Error**\n\nFailed to access database. Error: ${error}\n\nCheck DATABASE_PATH configuration.`
     );
   }
 });

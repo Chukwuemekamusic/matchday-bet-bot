@@ -96,6 +96,10 @@ const commands = [
     name: "syncmatches",
     description: "[Admin] Sync on-chain match IDs and fix match codes",
   },
+  {
+    name: "dbcheck",
+    description: "[Admin] Check database connectivity and show stats",
+  },
 
   /*//////////////////////////////////////////////////////////////
                          DEBUG SLASH COMMANDS
