@@ -92,10 +92,7 @@ const commands = [
     name: "fetch",
     description: "Manually fetch today's matches from API",
   },
-  {
-    name: "syncmatches",
-    description: "[Admin] Sync on-chain match IDs and fix match codes",
-  },
+
   {
     name: "dbcheck",
     description: "[Admin] Check database connectivity and show stats",
@@ -125,3 +122,8 @@ const commands = [
 ] as const satisfies BotCommand[];
 
 export default commands;
+
+// {
+//     name: "syncmatches",
+//     description: "[Admin] Sync on-chain match IDs and fix match codes",
+//   },

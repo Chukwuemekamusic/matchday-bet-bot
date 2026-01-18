@@ -1,6 +1,7 @@
 import { getSmartAccountFromUserId } from "@towns-protocol/bot";
 import { readContract } from "viem/actions";
 import walletLinkAbi from "@towns-protocol/generated/dev/abis/WalletLink.abi";
+import { config } from "../config";
 
 /**
  * Get all linked wallets for a user from the WalletLink contract
@@ -66,5 +67,28 @@ export async function getSmartAccountWallet(bot: any, userId: `0x${string}`) {
   } catch (error) {
     console.error("Error fetching smart account:", error);
     return null;
+  }
+}
+
+export async function isUserAdmin(
+  bot: any,
+  userId: `0x${string}`
+): Promise<boolean> {
+  try {
+    const smartAccount = await getSmartAccountFromUserId(bot, {
+      userId: userId,
+    });
+
+    // Check if user is admin (by EOA or smart account)
+    const isAdminByEOA =
+      userId.toLowerCase() === config.admin.userId.toLowerCase();
+    const isAdminBySmartAccount = smartAccount
+      ? smartAccount.toLowerCase() === config.admin.userId.toLowerCase()
+      : false;
+
+    return isAdminByEOA || isAdminBySmartAccount;
+  } catch (error) {
+    console.error("Error checking if user is admin:", error);
+    return false;
   }
 }

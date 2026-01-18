@@ -17,6 +17,8 @@ export {
   handleActive,
   createOddsHandler,
   createMyBetsHandler,
+  createWinnersHandler,
+  createVerifyHandler,
 } from "./matches";
 
 // Claiming
@@ -24,7 +26,20 @@ export {
   createClaimHandler,
   createClaimableHandler,
   createClaimAllHandler,
+  createClaimRefundHandler,
 } from "./claiming";
 
 // Stats
 export { createStatsHandler, handleLeaderboard } from "./stats";
+
+// Admin
+export {
+  createFetchHandler,
+  createSyncMatchesHandler,
+  createDBCheckHandler,
+  createMigrateHandler,
+  createBotInfoHandler,
+} from "./admin";
+
+// Utility
+export { createContractInfoHandler, createUserHasBetHandler } from "./utility";
