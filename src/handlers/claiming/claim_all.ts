@@ -85,6 +85,8 @@ export const createClaimAllHandler = (
       message += `You'll be prompted to confirm each wallet separately.\n\n`;
       message += `Ready to proceed?`;
 
+      await handler.sendMessage(channelId, message, opts);
+
       // Interaction instead of auto-claim
       await interactionService.sendFormInteraction(
         handler,

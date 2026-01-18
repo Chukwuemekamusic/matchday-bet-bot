@@ -378,14 +378,14 @@ export const CONTRACT_ABI = [
     name: "batchClaimWinnings",
     stateMutability: "nonpayable",
     inputs: [{ name: "matchIds", type: "uint256[]" }],
-    outputs: [],
+    outputs: [{ name: "totalPayout", type: "uint256" }],
   },
   {
     type: "function",
     name: "batchClaimRefunds",
     stateMutability: "nonpayable",
     inputs: [{ name: "matchIds", type: "uint256[]" }],
-    outputs: [],
+    outputs: [{ name: "totalRefund", type: "uint256" }],
   },
 ] as const;
 
