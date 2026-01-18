@@ -969,7 +969,8 @@ bot.onSlashCommand("syncmatches", async (handler, { channelId, userId, args }) =
       const kickoffTime = Number(onChainMatch.kickoffTime);
 
       // Find matching DB record by team names and kickoff time
-      const allMatches = db.getTodaysMatches();
+      // Use getRecentMatches(7) to search last 7 days instead of just today
+      const allMatches = db.getRecentMatches(7);
       let bestMatch = null;
 
       // Try to find exact match by team names (case-insensitive)
