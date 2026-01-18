@@ -110,9 +110,11 @@ Use \`/claimable\` to see matches you can claim from.`,
       }
 
       // Get wallet address (needed for claim status check)
-      const walletAddress = await getSmartAccountFromUserId(context.bot, {
+      // If user has a wallet address set, use that, otherwise get the smart account address
+      const smartAccount = await getSmartAccountFromUserId(context.bot, {
         userId: userId as `0x${string}`,
       });
+      const walletAddress = userBet.wallet_address || smartAccount;
 
       if (!walletAddress) {
         await handler.sendMessage(
