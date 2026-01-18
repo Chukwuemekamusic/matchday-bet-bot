@@ -148,7 +148,10 @@ class DatabaseService {
     if (existing) {
       // Update existing match (don't change daily_id or match_code)
       let result = existing.result;
+      // Only calculate outcome if result is NULL AND match is FINISHED
+      // Don't overwrite existing resolved matches
       if (
+        existing.result === null &&
         match.status === "FINISHED" &&
         match.home_score !== null &&
         match.away_score !== null

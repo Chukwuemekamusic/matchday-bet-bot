@@ -10,7 +10,8 @@ import type {
   HandlerContext,
 } from "../types";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
-import { formatOutcome } from "../../utils/format";
+import { formatOutcome, truncateAddress } from "../../utils/format";
+import { getLinkedWalletsExcludingSmartAccount } from "../../utils/wallet";
 
 export const createClaimableHandler = (
   context: HandlerContext
@@ -44,13 +45,43 @@ export const createClaimableHandler = (
       }
 
       // Get claimable matches from subgraph (with database fallback)
-      const result = await context.subgraphService.getUserClaimable(
-        walletAddress
+      // const result = await context.subgraphService.getUserClaimable(
+      //   walletAddress
+      // );
+      // const { winnings, refunds } = result.data;
+
+      // collect all wallets
+      const allWallets: `0x${string}`[] = [walletAddress];
+
+      // loop through all linked wallets and check for claimable matches
+      const linkedWallets = await getLinkedWalletsExcludingSmartAccount(
+        context.bot,
+        userId as `0x${string}`
       );
-      const { winnings, refunds } = result.data;
+
+      allWallets.push(...linkedWallets);
+
+      const walletClaims = [];
+
+      for (const wallet of allWallets) {
+        const result = await context.subgraphService.getUserClaimable(wallet);
+        const { winnings, refunds, source } = result.data;
+        walletClaims.push({
+          wallet: wallet,
+          source: source,
+          winnings: winnings,
+          refunds: refunds,
+        });
+      }
+
+      // checi if there are any claimable matches
+      const hasClaimable = walletClaims.some(
+        (walletClaim) =>
+          walletClaim.winnings.length > 0 || walletClaim.refunds.length > 0
+      );
 
       // If nothing to claim
-      if (winnings.length === 0 && refunds.length === 0) {
+      if (!hasClaimable) {
         await handler.sendMessage(
           channelId,
           `📭 **No Unclaimed Winnings**
@@ -65,57 +96,67 @@ Use \`/matches\` to see today's matches and place new bets!`,
 
       let message = `💰 **Your Claimable Matches**\n\n`;
 
-      // Add data source indicator (for debugging)
-      if (result.source === "fallback") {
-        message += `⚠️ _Using fallback data source_\n\n`;
-      }
+      for (const walletClaim of walletClaims) {
+        const { wallet, source, winnings, refunds } = walletClaim;
 
-      // Show winnings section
-      if (winnings.length > 0) {
-        message += `🏆 **Winnings (${winnings.length})**\n\n`;
+        if (winnings.length === 0 && refunds.length === 0) {
+          continue;
+        }
 
-        for (const match of winnings) {
-          message += `**${match.homeTeam} vs ${match.awayTeam}** (${match.matchCode})\n`;
-          message += `├ Competition: ${match.competition}\n`;
-          message += `├ Your Pick: ${formatOutcome(match.prediction)} ✅\n`;
-          message += `├ Stake: ${match.amount} ETH\n`;
+        message += `Wallet: ${truncateAddress(wallet)}\n\n`;
 
-          if (match.payout && match.profit) {
-            message += `├ Payout: ${match.payout} ETH\n`;
-            message += `└ Profit: ${match.profit} ETH\n\n`;
-          } else {
-            message += `└ Status: Ready to claim\n\n`;
+        // Add data source indicator (for debugging)
+        if (source === "fallback") {
+          message += `⚠️ _Using fallback data source_\n\n`;
+        }
+
+        // Show winnings section
+        if (winnings.length > 0) {
+          message += `🏆 **Winnings (${winnings.length})**\n\n`;
+
+          for (const match of winnings) {
+            message += `**${match.homeTeam} vs ${match.awayTeam}** (${match.matchCode})\n`;
+            message += `├ Competition: ${match.competition}\n`;
+            message += `├ Your Pick: ${formatOutcome(match.prediction)} ✅\n`;
+            message += `├ Stake: ${match.amount} ETH\n`;
+
+            if (match.payout && match.profit) {
+              message += `├ Payout: ${match.payout} ETH\n`;
+              message += `└ Profit: ${match.profit} ETH\n\n`;
+            } else {
+              message += `└ Status: Ready to claim\n\n`;
+            }
           }
         }
-      }
 
-      // Show refunds section
-      if (refunds.length > 0) {
-        message += `💰 **Refunds (${refunds.length})**\n\n`;
+        // Show refunds section
+        if (refunds.length > 0) {
+          message += `💰 **Refunds (${refunds.length})**\n\n`;
 
-        for (const match of refunds) {
-          message += `**${match.homeTeam} vs ${match.awayTeam}** (${match.matchCode})\n`;
-          message += `├ Competition: ${match.competition}\n`;
-          message += `├ Your Pick: ${formatOutcome(match.prediction)}\n`;
-          message += `├ Refund Amount: ${match.amount} ETH\n`;
-          message += `└ Reason: ${match.reason || "Match cancelled"}\n\n`;
+          for (const match of refunds) {
+            message += `**${match.homeTeam} vs ${match.awayTeam}** (${match.matchCode})\n`;
+            message += `├ Competition: ${match.competition}\n`;
+            message += `├ Your Pick: ${formatOutcome(match.prediction)}\n`;
+            message += `├ Refund Amount: ${match.amount} ETH\n`;
+            message += `└ Reason: ${match.reason || "Match cancelled"}\n\n`;
+          }
         }
-      }
 
-      message += `━━━━━━━━━━━━━━━━━\n`;
+        message += `━━━━━━━━━━━━━━━━━\n\n`;
 
-      // Show example claim commands
-      if (winnings.length > 0) {
-        message += `Use \`/claim ${winnings[0].matchCode}\` to claim winnings.\n`;
-      }
-      if (refunds.length > 0) {
-        // For "no winners" refunds, use /claim; for cancelled, use /claim_refund
-        const refundMatch = refunds[0];
-        if (refundMatch.reason?.includes("No winners")) {
-          message += `Use \`/claim ${refundMatch.matchCode}\` to claim refund.`;
-        } else {
-          message += `Use \`/claim_refund ${refundMatch.matchCode}\` to claim refund.`;
+        // Show example claim commands
+        if (winnings.length > 0) {
+          message += `Use \`/claim ${winnings[0].matchCode}\` to claim winnings.\n`;
         }
+        // if (refunds.length > 0) {
+        //   // For "no winners" refunds, use /claim; for cancelled, use /claim_refund
+        //   const refundMatch = refunds[0];
+        //   if (refundMatch.reason?.includes("No winners")) {
+        //     message += `Use \`/claim ${refundMatch.matchCode}\` to claim refund.`;
+        //   } else {
+        //     message += `Use \`/claim_refund ${refundMatch.matchCode}\` to claim refund.`;
+        //   }
+        // }
       }
 
       await handler.sendMessage(channelId, message, opts);
