@@ -913,12 +913,22 @@ bot.onSlashCommand("fetch", async (handler, { channelId }) => {
 // /syncmatches - Admin command to sync on-chain match IDs and fix match codes
 bot.onSlashCommand("syncmatches", async (handler, { channelId, userId, args }) => {
   try {
-    // Check if user is owner (admin only command)
-    const owner = await contractService.getOwner();
-    if (!owner || userId.toLowerCase() !== owner.toLowerCase()) {
+    // Get user's smart account address
+    const userSmartAccount = await getSmartAccountFromUserId(bot, {
+      userId: userId as `0x${string}`,
+    });
+
+    // Check if user is admin (by EOA or smart account)
+    const isAdminByEOA =
+      userId.toLowerCase() === config.admin.userId.toLowerCase();
+    const isAdminBySmartAccount = userSmartAccount
+      ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
+      : false;
+
+    if (!isAdminByEOA && !isAdminBySmartAccount) {
       await handler.sendMessage(
         channelId,
-        "❌ This command is admin-only."
+        "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
       );
       return;
     }
