@@ -31,7 +31,7 @@ export const createSyncMatchesHandler = (
       );
 
       // Define the range of on-chain match IDs to check
-      const onChainMatchIds = [19, 20, 21, 22, 23, 24, 25];
+      const onChainMatchIds = [29, 30, 31, 32, 33];
       const updates: Array<{
         onChainId: number;
         dbMatchId: number;
