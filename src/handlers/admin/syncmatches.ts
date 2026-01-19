@@ -46,9 +46,7 @@ export const createSyncMatchesHandler = (
         dbMatchId: number;
         homeTeam: string;
         awayTeam: string;
-        dailyId: number;
-        oldMatchCode: string | null;
-        newMatchCode: string;
+        matchCode: string | null;
       }> = [];
 
       // Check each on-chain match from subgraph
@@ -82,28 +80,20 @@ export const createSyncMatchesHandler = (
         }
 
         if (bestMatch) {
-          // Skip if daily_id is null
-          if (bestMatch.daily_id === null) {
+          // Skip if already has on-chain ID
+          if (bestMatch.on_chain_match_id !== null) {
             console.log(
-              `⚠️ DB match ${bestMatch.id} has no daily_id, skipping`
+              `⚠️ DB match ${bestMatch.id} already has on_chain_match_id: ${bestMatch.on_chain_match_id}, skipping`
             );
             continue;
           }
-
-          // Generate new match code based on daily_id
-          const newMatchCode = db.generateMatchCode(
-            bestMatch.kickoff_time,
-            bestMatch.daily_id
-          );
 
           updates.push({
             onChainId,
             dbMatchId: bestMatch.id,
             homeTeam: bestMatch.home_team,
             awayTeam: bestMatch.away_team,
-            dailyId: bestMatch.daily_id,
-            oldMatchCode: bestMatch.match_code,
-            newMatchCode,
+            matchCode: bestMatch.match_code,
           });
         } else {
           console.log(
@@ -129,18 +119,14 @@ export const createSyncMatchesHandler = (
       } else {
         for (const update of updates) {
           message += `Match ${update.onChainId}: ${update.homeTeam} vs ${update.awayTeam}\n`;
-          message += `  ✅ Found DB match #${update.dbMatchId} (daily_id: ${update.dailyId})\n`;
+          message += `  ✅ Found DB match #${update.dbMatchId}`;
+          if (update.matchCode) {
+            message += ` (${update.matchCode})`;
+          }
+          message += `\n`;
           message += `  → ${
             shouldApply ? "Set" : "Would set"
           } on_chain_match_id: ${update.onChainId}\n`;
-
-          if (update.oldMatchCode !== update.newMatchCode) {
-            message += `  → ${
-              shouldApply ? "Updated" : "Would update"
-            } match_code: ${update.oldMatchCode || "null"} → ${
-              update.newMatchCode
-            }\n`;
-          }
           message += `\n`;
         }
 
@@ -156,9 +142,6 @@ export const createSyncMatchesHandler = (
         if (shouldApply) {
           for (const update of updates) {
             db.setOnChainMatchId(update.dbMatchId, update.onChainId);
-            if (update.oldMatchCode !== update.newMatchCode) {
-              db.updateMatchCode(update.dbMatchId, update.newMatchCode);
-            }
           }
           message += `\n\n✅ Database updated successfully!`;
           console.log(`✅ Synced ${updates.length} matches`);
