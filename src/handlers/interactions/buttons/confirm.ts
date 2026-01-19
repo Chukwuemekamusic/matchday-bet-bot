@@ -3,9 +3,15 @@
  * Handles the "Confirm & Sign" button click for placing bets
  */
 
+import { formatEther } from "viem";
 import { parseEth, isBettingOpen } from "../../../utils/format";
 import { db } from "../../../db";
 import { interactionService } from "../../../services/interactions";
+import {
+  getUserWalletBalances,
+  validateBetBalance,
+  formatBalanceMessage,
+} from "../../../utils/balanceValidator";
 import type { ButtonHandler } from "../types";
 
 export const handleConfirmButton: ButtonHandler = async (
@@ -64,6 +70,36 @@ export const handleConfirmButton: ButtonHandler = async (
     );
     return;
   }
+
+  // Check user balance before proceeding with match creation
+  console.log("💰 [BET CONFIRM] Checking wallet balances...");
+
+  const walletBalances = await getUserWalletBalances(
+    context.bot,
+    userId,
+    context.publicClient,
+  );
+
+  const amount = parseEth(pendingBet.amount);
+  const validation = validateBetBalance(walletBalances, amount);
+
+  if (!validation.hasValid) {
+    console.log("❌ [BET CONFIRM] Insufficient balance in all wallets");
+
+    const balanceMessage = formatBalanceMessage(validation, amount);
+    await handler.sendMessage(
+      channelId,
+      `${balanceMessage}\n\n_Your pending bet is saved. Use \`/cancel\` to cancel._`,
+      opts,
+    );
+    return; // Don't create match or proceed
+  }
+
+  // Select wallet with sufficient balance
+  const selectedWallet = validation.validWallets[0];
+  console.log(
+    `✅ [BET CONFIRM] Selected wallet: ${selectedWallet.address} (balance: ${formatEther(selectedWallet.balance)} ETH)`,
+  );
 
   // Create match on-chain if not exists
   let onChainMatchId: number = match.on_chain_match_id ?? 0;
@@ -139,7 +175,8 @@ export const handleConfirmButton: ButtonHandler = async (
     pendingBet.prediction,
   );
 
-  const amount = parseEth(pendingBet.amount);
+  // TODO: CHECK if this need uncommenting
+  // const amount = parseEth(pendingBet.amount);
 
   // Generate transaction ID
   const txId = `tx-${onChainMatchId}-${userId.slice(0, 8)}-${
@@ -158,6 +195,7 @@ export const handleConfirmButton: ButtonHandler = async (
       to: context.contractService.getContractAddress(),
       value: amount.toString(),
       data: calldata,
+      signerWallet: selectedWallet.address, // Pre-select wallet with sufficient balance
     },
     opts?.threadId,
   );

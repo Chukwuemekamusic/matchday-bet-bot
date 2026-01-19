@@ -29,7 +29,7 @@ import { Outcome } from "../../types";
 import { config } from "../../config";
 
 export const createBetHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, userId, eventId, threadId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -51,9 +51,9 @@ export const createBetHandler = (
           ? `YES - match ${existingPending.match_id}, ${
               existingPending.amount
             } ETH, expires ${new Date(
-              existingPending.expires_at * 1000
+              existingPending.expires_at * 1000,
             ).toISOString()}`
-          : "NO"
+          : "NO",
       );
 
       console.log("═══════════════════════════════════════════════════════");
@@ -64,7 +64,7 @@ export const createBetHandler = (
           channelId,
           `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
 Example: \`/bet 1 home 0.01\``,
-          opts
+          opts,
         );
         return;
       }
@@ -81,7 +81,7 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           "❌ Invalid match number. Use `/matches` to see available matches.",
-          opts
+          opts,
         );
         return;
       }
@@ -94,7 +94,7 @@ Example: \`/bet 1 home 0.01\``,
           ? `${lookupResult.match!.home_team} vs ${
               lookupResult.match!.away_team
             }`
-          : "NOT FOUND"
+          : "NOT FOUND",
       );
 
       if (!lookupResult.success) {
@@ -110,14 +110,14 @@ Example: \`/bet 1 home 0.01\``,
         "⏰ Betting open?",
         bettingOpen,
         "Kickoff:",
-        new Date(match.kickoff_time * 1000)
+        new Date(match.kickoff_time * 1000),
       );
 
       if (!bettingOpen) {
         await handler.sendMessage(
           channelId,
           "❌ Betting is closed for this match. Kickoff has passed.",
-          opts
+          opts,
         );
         return;
       }
@@ -130,7 +130,7 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           "❌ Invalid prediction. Use: home, draw, or away",
-          opts
+          opts,
         );
         return;
       }
@@ -145,7 +145,7 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           "❌ Invalid amount. Enter a number like 0.01",
-          opts
+          opts,
         );
         return;
       }
@@ -157,7 +157,7 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           `❌ Minimum bet is ${config.betting.minStake} ETH`,
-          opts
+          opts,
         );
         return;
       }
@@ -166,7 +166,7 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           `❌ Maximum bet is ${config.betting.maxStake} ETH`,
-          opts
+          opts,
         );
         return;
       }
@@ -177,23 +177,29 @@ Example: \`/bet 1 home 0.01\``,
         await handler.sendMessage(
           channelId,
           `❌ You've already placed a bet on this match with wallet ${truncateAddress(
-            existingBet.wallet_address
+            existingBet.wallet_address,
           )}
         \n\nNote: You can only bet once per match. Use "/mybets" to view your active bets.`,
-          opts
+          opts,
         );
         return;
       }
 
       // Create pending bet (store threadId for later use in interaction responses)
-      db.createPendingBet(userId, match.id, prediction, amountStr, opts?.threadId || eventId);
+      db.createPendingBet(
+        userId,
+        match.id,
+        prediction,
+        amountStr,
+        opts?.threadId || eventId,
+      );
 
       const predictionDisplay =
         prediction === Outcome.HOME
           ? `${match.home_team} Win (Home)`
           : prediction === Outcome.DRAW
-          ? "Draw"
-          : `${match.away_team} Win (Away)`;
+            ? "Draw"
+            : `${match.away_team} Win (Away)`;
 
       // Calculate potential winnings if match is on-chain and contract available
       let potentialWinnings = "";
@@ -205,11 +211,11 @@ Example: \`/bet 1 home 0.01\``,
           await context.contractService.calculatePotentialWinnings(
             match.on_chain_match_id,
             prediction,
-            amount
+            amount,
           );
         if (potential) {
           potentialWinnings = `\n💸 Potential Payout: ~${formatEth(
-            potential
+            potential,
           )} ETH`;
         }
       }
@@ -220,7 +226,7 @@ Example: \`/bet 1 home 0.01\``,
         InteractionType.BET_CONFIRM,
         match.id,
         userId,
-        opts?.threadId
+        opts?.threadId,
       );
 
       // Store interaction ID with pending bet
@@ -240,7 +246,6 @@ ${match.home_team} vs ${match.away_team}
 
 **Your Pick:** ${predictionDisplay}
 **Stake:** ${amountStr} ETH
-${potentialWinnings}
 
 ⚠️ This will transfer ${amountStr} ETH from your wallet.
 
@@ -253,6 +258,9 @@ _This pending bet expires in 5 minutes._`;
         console.log("  - interactionId:", interactionId);
         console.log("  - userId:", userId);
 
+        // messge to user showing the bet details and asking for confirmation to sign the transaction
+        await handler.sendMessage(channelId, message, opts);
+
         await interactionService.sendFormInteraction(
           handler,
           channelId,
@@ -262,11 +270,11 @@ _This pending bet expires in 5 minutes._`;
             title: "Confirm Bet",
             content: message,
             buttons: [
-              { id: "confirm", label: "Confirm & Sign", style: 1 },
+              { id: "confirm", label: "Confirm Bet", style: 1 },
               { id: "cancel", label: "Cancel", style: 2 },
             ],
           },
-          opts?.threadId
+          opts?.threadId,
         );
 
         console.log("✅ Interaction request sent successfully");
@@ -300,7 +308,7 @@ ${
 }
 
 _This pending bet expires in 5 minutes._`,
-          opts
+          opts,
         );
       }
     } catch (error) {
@@ -311,7 +319,7 @@ _This pending bet expires in 5 minutes._`,
         await handler.sendMessage(
           channelId,
           "❌ An unexpected error occurred. Please try again or contact support.",
-          opts
+          opts,
         );
       } catch (msgError) {
         console.error("❌ Failed to send error message:", msgError);

@@ -39,6 +39,7 @@ export {
   createDBCheckHandler,
   createMigrateHandler,
   createBotInfoHandler,
+  createResolveHandler,
 } from "./admin";
 
 // Utility

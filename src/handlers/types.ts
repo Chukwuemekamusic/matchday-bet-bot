@@ -34,7 +34,7 @@ export interface InteractionEvent extends BaseCommandEvent {
  */
 export type CommandHandler<T extends BaseCommandEvent = BaseCommandEvent> = (
   handler: BotHandler,
-  event: T
+  event: T,
 ) => Promise<void>;
 
 /**
@@ -45,4 +45,5 @@ export interface HandlerContext {
   contractService: any;
   matchOps: any;
   subgraphService: any;
+  publicClient: any; // Viem public client for balance checks
 }

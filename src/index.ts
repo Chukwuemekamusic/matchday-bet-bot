@@ -1,4 +1,6 @@
 import { makeTownsBot, getSmartAccountFromUserId } from "@towns-protocol/bot";
+import { createPublicClient, http } from "viem";
+import { base } from "viem/chains";
 import commands from "./commands";
 import { db } from "./db";
 import { ContractService, CONTRACT_ABI } from "./services/contract";
@@ -42,6 +44,7 @@ import {
   createClaimRefundHandler,
   createContractInfoHandler,
   createUserHasBetHandler,
+  createResolveHandler,
   handleConfirmButton,
   handleClaimCancelButton,
   handleClaimAllCancelButton,
@@ -57,7 +60,7 @@ const bot = await makeTownsBot(
   process.env.JWT_SECRET!,
   {
     commands,
-  }
+  },
 );
 
 // Log SDK version info for debugging
@@ -65,6 +68,12 @@ console.log("📦 SDK Information:");
 console.log("  - @towns-protocol/bot: 0.0.453");
 console.log("  - viem:", "2.29.3");
 console.log("  - Bot initialized successfully");
+
+// Create public client for reading blockchain data (balance checks, etc.)
+const publicClient = createPublicClient({
+  chain: base,
+  transport: http(config.chain.rpcUrl),
+});
 
 // Initialize services with bot instance
 const contractService = new ContractService(bot);
@@ -76,6 +85,7 @@ const handlerContext: HandlerContext = {
   contractService,
   matchOps,
   subgraphService,
+  publicClient,
 };
 
 // ==================== BOT HANDLERS ====================
@@ -148,7 +158,7 @@ bot.onInteractionResponse(async (handler, event) => {
   console.log("  - channelId:", channelId);
   console.log(
     "  - response.payload.content?.case:",
-    response.payload.content?.case
+    response.payload.content?.case,
   );
 
   // Handle form interactions (buttons)
@@ -194,7 +204,7 @@ bot.onInteractionResponse(async (handler, event) => {
       await handler.sendMessage(
         channelId,
         "❌ Bet expired or already processed. Please place a new bet with `/bet`.",
-        opts
+        opts,
       );
       return;
     }
@@ -219,7 +229,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -237,7 +247,7 @@ bot.onInteractionResponse(async (handler, event) => {
             "  - Pending bet before clear:",
             pendingBetToCancel
               ? `match ${pendingBetToCancel.match_id}, ${pendingBetToCancel.amount} ETH`
-              : "NONE FOUND"
+              : "NONE FOUND",
           );
 
           db.clearPendingBet(userId);
@@ -246,13 +256,13 @@ bot.onInteractionResponse(async (handler, event) => {
           const checkCleared = db.getPendingBet(userId);
           console.log(
             "  - Pending bet after clear:",
-            checkCleared ? "❌ STILL EXISTS!" : "✅ Successfully cleared"
+            checkCleared ? "❌ STILL EXISTS!" : "✅ Successfully cleared",
           );
 
           await handler.sendMessage(channelId, "✅ Bet cancelled.", opts);
 
           console.log(
-            "  - Cancel complete, user should be able to place new bet"
+            "  - Cancel complete, user should be able to place new bet",
           );
           return;
         }
@@ -269,7 +279,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -286,7 +296,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -303,7 +313,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -320,7 +330,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -337,7 +347,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -354,7 +364,7 @@ bot.onInteractionResponse(async (handler, event) => {
               components: form.components,
               threadId,
             },
-            handlerContext
+            handlerContext,
           );
           return;
         }
@@ -396,7 +406,7 @@ bot.onInteractionResponse(async (handler, event) => {
 Waiting for confirmation on Base...
 
 🔗 [View on Basescan](https://basescan.org/tx/${txHash})`,
-        opts
+        opts,
       );
 
       // Wait for transaction to be mined
@@ -466,7 +476,7 @@ Waiting for confirmation on Base...
                         winnings = betAmount; // At minimum, user got their stake back
                         profit = 0n;
                         console.warn(
-                          `Could not parse WinningsClaimed event for match ${onChainMatchId}, using bet amount as fallback`
+                          `Could not parse WinningsClaimed event for match ${onChainMatchId}, using bet amount as fallback`,
                         );
                       }
 
@@ -478,7 +488,7 @@ Waiting for confirmation on Base...
                         db.recordWin(
                           userId,
                           formatEth(winnings),
-                          formatEth(profit)
+                          formatEth(profit),
                         );
                       }
 
@@ -499,18 +509,18 @@ Waiting for confirmation on Base...
                             { userId, displayName: userId.slice(0, 8) },
                           ],
                           ...(threadId && { threadId }),
-                        }
+                        },
                       );
 
                       console.log(
                         `✅ Claim confirmed for ${userId}: ${txHash}, profit: ${formatEth(
-                          profit
-                        )} ETH`
+                          profit,
+                        )} ETH`,
                       );
                     } catch (error) {
                       console.error(
                         "Error processing claim confirmation:",
-                        error
+                        error,
                       );
                       await handler.sendMessage(
                         channelId,
@@ -518,7 +528,7 @@ Waiting for confirmation on Base...
 
 Your winnings have been claimed. Check your wallet to see the payout.
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                       );
                     }
                   } else {
@@ -533,7 +543,7 @@ Your claim transaction was successful!
 
 **Match:** ${match.home_team} vs ${match.away_team}
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                     );
                   }
                 } else {
@@ -544,7 +554,7 @@ Your claim transaction was successful!
 
 Your winnings have been claimed successfully!
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                   );
                 }
               } else {
@@ -555,7 +565,7 @@ Your winnings have been claimed successfully!
 
 Your claim was successful! Check your wallet.
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                 );
               }
             }
@@ -599,13 +609,13 @@ Your claim was successful! Check your wallet.
                     {
                       mentions: [{ userId, displayName: userId.slice(0, 8) }],
                       ...(threadId && { threadId }),
-                    }
+                    },
                   );
 
                   console.log(
                     `✅ Refund confirmed for ${userId}: ${txHash}, amount: ${formatEth(
-                      refundAmount
-                    )} ETH`
+                      refundAmount,
+                    )} ETH`,
                   );
                 } else {
                   // No bet found in DB, but transaction succeeded
@@ -615,7 +625,7 @@ Your claim was successful! Check your wallet.
 
 Your refund has been processed successfully!
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                   );
                 }
               } else {
@@ -626,7 +636,7 @@ Your refund has been processed successfully!
 
 Your refund was successful! Check your wallet.
 
-🔗 [Transaction](https://basescan.org/tx/${txHash})`
+🔗 [Transaction](https://basescan.org/tx/${txHash})`,
                 );
               }
             }
@@ -646,7 +656,10 @@ Your refund was successful! Check your wallet.
 
               if (match) {
                 console.log("  - match.id:", match.id);
-                console.log("  - match.on_chain_match_id:", match.on_chain_match_id);
+                console.log(
+                  "  - match.on_chain_match_id:",
+                  match.on_chain_match_id,
+                );
                 console.log("  - pendingBet.amount:", pendingBet.amount);
 
                 const predictionDisplay = formatOutcome(pendingBet.prediction);
@@ -666,9 +679,12 @@ Your refund was successful! Check your wallet.
                     console.log("🔍 [BET TX] Looking up linked wallets...");
                     const linkedWallets = await getLinkedWallets(
                       bot,
-                      userId as `0x${string}`
+                      userId as `0x${string}`,
                     );
-                    console.log("  - linkedWallets found:", linkedWallets.length);
+                    console.log(
+                      "  - linkedWallets found:",
+                      linkedWallets.length,
+                    );
                     console.log("  - wallets:", linkedWallets);
 
                     let bettorWallet: string | null = null;
@@ -677,9 +693,12 @@ Your refund was successful! Check your wallet.
                       console.log("  - Checking wallet:", wallet);
                       const onChainBet = await contractService.getUserBet(
                         match.on_chain_match_id,
-                        wallet
+                        wallet,
                       );
-                      console.log("    - onChainBet amount:", onChainBet?.amount || "0");
+                      console.log(
+                        "    - onChainBet amount:",
+                        onChainBet?.amount || "0",
+                      );
                       if (onChainBet && onChainBet.amount > 0n) {
                         bettorWallet = wallet;
                         console.log("  ✅ Found bettor wallet:", wallet);
@@ -691,7 +710,7 @@ Your refund was successful! Check your wallet.
                       // Record bet in database
                       // Convert decimal string to wei string for consistent storage
                       const amountWeiString = parseEth(
-                        pendingBet.amount
+                        pendingBet.amount,
                       ).toString();
 
                       db.createBet(
@@ -701,18 +720,24 @@ Your refund was successful! Check your wallet.
                         match.on_chain_match_id,
                         pendingBet.prediction,
                         amountWeiString,
-                        txHash
+                        txHash,
                       );
                       console.log(
                         `💾 [BET TX] Bet recorded in DB: ${userId} -> ${truncateAddress(
-                          bettorWallet
-                        )}`
+                          bettorWallet,
+                        )}`,
                       );
                     } else {
                       console.warn("⚠️ [BET TX] No bettor wallet found!");
-                      console.warn("  - Bet was placed on-chain but could not determine which wallet");
-                      console.warn("  - Transaction confirmed but NOT recorded in database");
-                      console.warn("  - User can run /verify to recover this bet");
+                      console.warn(
+                        "  - Bet was placed on-chain but could not determine which wallet",
+                      );
+                      console.warn(
+                        "  - Transaction confirmed but NOT recorded in database",
+                      );
+                      console.warn(
+                        "  - User can run /verify to recover this bet",
+                      );
                     }
                   } catch (error) {
                     console.error("Failed to record bet in DB:", error);
@@ -734,7 +759,7 @@ Your refund was successful! Check your wallet.
               {
                 mentions: [{ userId, displayName: userId.slice(0, 8) }],
                 ...(threadId && { threadId }),
-              }
+              },
             );
 
             console.log(`✅ Bet confirmed for ${userId}: ${txHash}`);
@@ -766,7 +791,9 @@ Your refund was successful! Check your wallet.
             errorMessage += `Your bet was not placed. The transaction was reverted.`;
 
             // Clear pending bet for failed bet transactions so user can retry
-            console.log("🧹 [BET TX] Clearing pending bet due to failed transaction");
+            console.log(
+              "🧹 [BET TX] Clearing pending bet due to failed transaction",
+            );
             db.clearPendingBet(userId);
             errorMessage += `\n\n_Your pending bet has been cleared. You can place a new bet with \`/bet\`._`;
           }
@@ -779,7 +806,7 @@ Your refund was successful! Check your wallet.
 
           const txType = isClaimTx ? "Claim" : isRefundTx ? "Refund" : "Bet";
           console.log(
-            `❌ ${txType} transaction failed for ${userId}: ${txHash}`
+            `❌ ${txType} transaction failed for ${userId}: ${txHash}`,
           );
         }
       } catch (error) {
@@ -792,7 +819,7 @@ I couldn't verify your transaction status. Please check Basescan:
 
 🔗 [View Transaction](https://basescan.org/tx/${txHash})
 
-Use \`/mybets\` to verify your bet was placed.`
+Use \`/mybets\` to verify your bet was placed.`,
         );
       }
     }
@@ -816,7 +843,7 @@ bot.onMessage(
       await handler.sendMessage(
         channelId,
         "Hey! 👋 Ready to bet on some football? Use `/matches` to see today's games!",
-        opts
+        opts,
       );
       return;
     }
@@ -825,7 +852,7 @@ bot.onMessage(
       await handler.sendMessage(
         channelId,
         "Use `/help` to see all available commands!",
-        opts
+        opts,
       );
       return;
     }
@@ -837,7 +864,7 @@ bot.onMessage(
       await handler.sendMessage(
         channelId,
         `📍 **Channel ID:**\n\`\`\`\n${channelId}\n\`\`\`\n\nAdd this to your \`.env\` file as:\n\`DEFAULT_CHANNEL_ID=${channelId}\``,
-        opts
+        opts,
       );
       return;
     }
@@ -846,9 +873,9 @@ bot.onMessage(
     await handler.sendMessage(
       channelId,
       "Hey! Use `/help` to see what I can do. 🎯⚽",
-      opts
+      opts,
     );
-  }
+  },
 );
 
 // ==================== HELPER FUNCTIONS ====================
@@ -867,322 +894,7 @@ bot.onSlashCommand("botinfo", createBotInfoHandler(handlerContext));
 bot.onSlashCommand("userHasBet", createUserHasBetHandler(handlerContext));
 
 // /resolve - Admin-only manual match resolution
-bot.onSlashCommand("resolve", async (handler, { channelId, userId, args }) => {
-  try {
-    // Get user's smart account address
-    const userSmartAccount = await getSmartAccountFromUserId(bot, {
-      userId: userId as `0x${string}`,
-    });
-
-    // Debug logging for authorization check
-    console.log("═══════════════════════════════════════════════════════════");
-    console.log("🔐 /RESOLVE AUTHORIZATION CHECK");
-    console.log("═══════════════════════════════════════════════════════════");
-    console.log("  📅 Timestamp:", new Date().toISOString());
-    console.log("  👤 userId (EOA):", userId);
-    console.log("  🏦 Smart Account:", userSmartAccount || "null");
-    console.log("  🔑 config.admin.userId:", config.admin.userId);
-    console.log("  ─────────────────────────────────────────────────────────");
-    console.log(
-      "  ✓ EOA matches config:",
-      userId.toLowerCase() === config.admin.userId.toLowerCase()
-    );
-    console.log(
-      "  ✓ Smart Account matches config:",
-      userSmartAccount
-        ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
-        : false
-    );
-    console.log("═══════════════════════════════════════════════════════════");
-
-    // Check if user is admin (by EOA or smart account)
-    const isAdminByEOA =
-      userId.toLowerCase() === config.admin.userId.toLowerCase();
-    const isAdminBySmartAccount = userSmartAccount
-      ? userSmartAccount.toLowerCase() === config.admin.userId.toLowerCase()
-      : false;
-
-    if (!isAdminByEOA && !isAdminBySmartAccount) {
-      await handler.sendMessage(
-        channelId,
-        "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
-      );
-      return;
-    }
-
-    // Validate arguments
-    if (args.length !== 1) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Invalid Usage**
-
-**Usage:** \`/resolve <match#|match_code>\`
-
-**Examples:**
-  \`/resolve 1\` (today's match #1)
-  \`/resolve 20260111-2\` (specific match by code)
-
-Use \`/matches\` to see today's match numbers.`
-      );
-      return;
-    }
-
-    const input = args[0];
-
-    // Use match lookup service
-    const lookupResult = matchLookup.findMatch(input, {
-      commandName: "/resolve",
-      suggestionCommand: "/matches",
-    });
-
-    if (!lookupResult.success) {
-      await handler.sendMessage(channelId, lookupResult.errorMessage!);
-      return;
-    }
-
-    const match = lookupResult.match!;
-
-    // Check if match has on-chain ID
-    if (!match.on_chain_match_id) {
-      const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
-      await handler.sendMessage(
-        channelId,
-        `❌ **Cannot Resolve Match**
-
-**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
-
-This match hasn't been created on-chain yet (no bets placed).`
-      );
-      return;
-    }
-
-    // Check if already resolved
-    if (match.status === "FINISHED" && match.result !== null) {
-      const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
-      await handler.sendMessage(
-        channelId,
-        `ℹ️ **Match Already Resolved**
-
-**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
-**Score:** ${match.home_score} - ${match.away_score}
-**Result:** ${formatOutcome(match.result)}`
-      );
-      return;
-    }
-
-    // Fetch latest match data from API
-    await handler.sendMessage(
-      channelId,
-      `🔍 Fetching latest match data for **${match.home_team} vs ${match.away_team}**...`
-    );
-
-    const apiMatch = await footballApi.getMatch(match.api_match_id);
-
-    // Check if match is postponed or cancelled
-    if (FootballAPIService.isPostponed(apiMatch.status)) {
-      const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
-      await handler.sendMessage(
-        channelId,
-        `🚫 **Match Postponed/Cancelled**
-
-**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
-**Status:** ${apiMatch.status}
-**On-Chain Match ID:** ${match.on_chain_match_id}
-
-Checking on-chain status...`
-      );
-
-      // Check on-chain status first to avoid reverting
-      const onChainMatch = await contractService.getMatch(
-        match.on_chain_match_id
-      );
-
-      if (!onChainMatch) {
-        await handler.sendMessage(
-          channelId,
-          `❌ **Match Not Found On-Chain**
-
-**Match ID:** ${match.on_chain_match_id}
-
-The match was not found on the blockchain. It may have been deleted or never created.`
-        );
-        return;
-      }
-
-      // Check if already cancelled or resolved
-      if (onChainMatch.status === 3) {
-        // Already CANCELLED
-        db.updateMatchStatus(match.id, "CANCELLED");
-        await handler.sendMessage(
-          channelId,
-          `ℹ️ **Match Already Cancelled**
-
-**Match ID:** ${match.on_chain_match_id}
-**On-Chain Status:** CANCELLED (${onChainMatch.status})
-
-This match is already cancelled on-chain. Bettors can claim refunds using \`/claim\``
-        );
-        return;
-      }
-
-      if (onChainMatch.status === 2) {
-        // Already RESOLVED
-        await handler.sendMessage(
-          channelId,
-          `❌ **Match Already Resolved**
-
-**Match ID:** ${match.on_chain_match_id}
-**On-Chain Status:** RESOLVED (${onChainMatch.status})
-
-This match has already been resolved on-chain and cannot be cancelled.`
-        );
-        return;
-      }
-
-      // Cancel on-chain
-      await handler.sendMessage(
-        channelId,
-        `⏳ Cancelling match on-chain and enabling refunds...`
-      );
-
-      const cancelReason = `Match ${apiMatch.status.toLowerCase()} - manually cancelled by admin`;
-      const cancelResult = await contractService.cancelMatch(
-        match.on_chain_match_id,
-        cancelReason
-      );
-
-      if (!cancelResult) {
-        await handler.sendMessage(
-          channelId,
-          `❌ **On-Chain Cancellation Failed**
-
-Failed to cancel the match on-chain. Check logs for details.`
-        );
-        return;
-      }
-
-      // Update local database
-      db.updateMatchStatus(match.id, "CANCELLED");
-
-      // Get pool info for refund message
-      const pools = await contractService.getPools(match.on_chain_match_id);
-      const totalPool = pools ? formatEth(pools.total) : "?";
-
-      // Success message
-      await handler.sendMessage(
-        channelId,
-        `✅ **Match Cancelled Successfully**
-
-🚫 **${match.home_team} vs ${match.away_team}**
-📊 **Total Pool:** ${totalPool} ETH
-🔗 **Transaction:** [View on BaseScan](https://basescan.org/tx/${cancelResult.txHash})
-
-💰 **Refunds Available:** All bettors can claim full refunds using \`/claim\``
-      );
-      return;
-    }
-
-    // Check if match is finished
-    if (!FootballAPIService.isFinished(apiMatch.status)) {
-      const matchDisplay = match.match_code || `#${match.daily_id || match.id}`;
-      await handler.sendMessage(
-        channelId,
-        `❌ **Match Not Finished**
-
-**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
-**Status:** ${apiMatch.status}
-
-Cannot resolve a match that hasn't finished yet.
-💡 **Tip:** If the match is postponed/cancelled, run \`/resolve ${input}\` again to cancel it on-chain.`
-      );
-      return;
-    }
-
-    // Get scores
-    const homeScore = apiMatch.score.fullTime.home;
-    const awayScore = apiMatch.score.fullTime.away;
-
-    if (homeScore === null || awayScore === null) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **No Score Available**
-
-Match is marked as finished but scores are not available yet. Please try again later.`
-      );
-      return;
-    }
-
-    // Determine outcome
-    const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
-
-    if (outcome === null) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **Error Determining Outcome**
-
-Could not determine match outcome from scores: ${homeScore} - ${awayScore}`
-      );
-      return;
-    }
-
-    // Update local database
-    db.updateMatchResult(match.id, homeScore, awayScore, outcome);
-
-    // Resolve on-chain
-    await handler.sendMessage(
-      channelId,
-      `⏳ Resolving match on-chain...\n\n**${
-        match.home_team
-      } ${homeScore} - ${awayScore} ${
-        match.away_team
-      }**\n**Result:** ${formatOutcome(outcome)}`
-    );
-
-    const result = await contractService.resolveMatch(
-      match.on_chain_match_id,
-      outcome
-    );
-
-    if (!result) {
-      await handler.sendMessage(
-        channelId,
-        `❌ **On-Chain Resolution Failed**
-
-The match result was saved locally but the on-chain transaction failed. Check logs for details.`
-      );
-      return;
-    }
-
-    // Get pool info
-    const pools = await contractService.getPools(match.on_chain_match_id);
-    const totalPool = pools ? formatEth(pools.total) : "?";
-
-    // Success message
-    const matchCode = match.match_code || `${match.daily_id}`;
-    await handler.sendMessage(
-      channelId,
-      `✅ **Match Resolved Successfully**
-
-🏁 **${match.home_team} ${homeScore} - ${awayScore} ${match.away_team}**
-
-**Result:** ${formatOutcome(outcome)}
-💰 **Total Pool:** ${totalPool} ETH
-🔗 **Transaction:** \`${result.txHash}\`
-
-Winners can now claim their winnings using \`/claim ${matchCode}\``
-    );
-  } catch (error) {
-    console.error("Error in /resolve command:", error);
-    await handler.sendMessage(
-      channelId,
-      `❌ **Resolution Failed**
-
-**Error:** ${error instanceof Error ? error.message : "Unknown error"}
-
-Please check the logs for more details.`
-    );
-  }
-});
+bot.onSlashCommand("resolve", createResolveHandler(handlerContext));
 
 /*//////////////////////////////////////////////////////////////
                          START BOT
