@@ -13,6 +13,7 @@ import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { formatEth, formatOutcome, truncateAddress } from "../../utils/format";
 import { matchLookup } from "../../services/matchLookup";
 import { isAddress } from "viem";
+import { getLinkedWallets } from "../../utils/wallet";
 
 export const createUserHasBetHandler = (
   context: HandlerContext
@@ -135,7 +136,9 @@ No bets have been placed on this match.`,
 
 ❌ **No bet found**
 
-${isCommandSender ? "You haven't" : "This user hasn't"} placed a bet on this match.`,
+${
+  isCommandSender ? "You haven't" : "This user hasn't"
+} placed a bet on this match.`,
           opts
         );
         return;
@@ -153,7 +156,9 @@ ${isCommandSender ? "You haven't" : "This user hasn't"} placed a bet on this mat
           channelId,
           `⚠️ **Inconsistent State**
 
-The contract indicates ${userLabel.toLowerCase()} ${isCommandSender ? "have" : "has"} a bet, but couldn't fetch bet details.`,
+The contract indicates ${userLabel.toLowerCase()} ${
+            isCommandSender ? "have" : "has"
+          } a bet, but couldn't fetch bet details.`,
           opts
         );
         return;

@@ -11,10 +11,10 @@ import type { ButtonHandler } from "../types";
 export const handleConfirmButton: ButtonHandler = async (
   handler,
   event,
-  context
+  context,
 ) => {
   const { channelId, userId, requestId, threadId } = event;
-  const opts = threadId ? { threadId } : undefined;
+  let opts = threadId ? { threadId } : undefined;
 
   console.log("✅ [INTERACTION] 'confirm' button clicked (bet confirmation)");
 
@@ -24,9 +24,15 @@ export const handleConfirmButton: ButtonHandler = async (
     await handler.sendMessage(
       channelId,
       "❌ Bet expired or already processed. Please place a new bet with `/bet`.",
-      opts
+      opts,
     );
     return;
+  }
+
+  // Use the thread_id from pending bet (saved when /bet was called)
+  // This ensures we send messages to the same thread where the bet was initiated
+  if (pendingBet.thread_id) {
+    opts = { threadId: pendingBet.thread_id };
   }
 
   // Get the match
@@ -43,7 +49,7 @@ export const handleConfirmButton: ButtonHandler = async (
     await handler.sendMessage(
       channelId,
       "❌ Betting is now closed for this match.",
-      opts
+      opts,
     );
     return;
   }
@@ -54,7 +60,7 @@ export const handleConfirmButton: ButtonHandler = async (
     await handler.sendMessage(
       channelId,
       "❌ Smart contract is not yet deployed. Please try again once the contract is live.",
-      opts
+      opts,
     );
     return;
   }
@@ -63,14 +69,14 @@ export const handleConfirmButton: ButtonHandler = async (
   let onChainMatchId: number = match.on_chain_match_id ?? 0;
   if (!match.on_chain_match_id) {
     console.log(
-      `📝 Match not yet on-chain. Creating match: ${match.home_team} vs ${match.away_team}`
+      `📝 Match not yet on-chain. Creating match: ${match.home_team} vs ${match.away_team}`,
     );
 
     const result = await context.contractService.createMatch(
       match.home_team,
       match.away_team,
       match.competition,
-      match.kickoff_time
+      match.kickoff_time,
     );
 
     // Handle errors with specific messages
@@ -106,14 +112,14 @@ export const handleConfirmButton: ButtonHandler = async (
     onChainMatchId = result.matchId;
     db.setOnChainMatchId(match.id, onChainMatchId);
     console.log(
-      `✅ Match ${match.id} created on-chain with ID ${onChainMatchId}, tx: ${result.txHash}`
+      `✅ Match ${match.id} created on-chain with ID ${onChainMatchId}, tx: ${result.txHash}`,
     );
 
     // Notify user that match was created
     await handler.sendMessage(
       channelId,
       `✅ Match created on-chain! Now sending your bet transaction...`,
-      opts
+      opts,
     );
   }
 
@@ -122,7 +128,7 @@ export const handleConfirmButton: ButtonHandler = async (
     await handler.sendMessage(
       channelId,
       "❌ Match ID not available. Please try again.",
-      opts
+      opts,
     );
     return;
   }
@@ -130,7 +136,7 @@ export const handleConfirmButton: ButtonHandler = async (
   // Generate transaction for user to sign
   const calldata = context.contractService.encodePlaceBet(
     onChainMatchId,
-    pendingBet.prediction
+    pendingBet.prediction,
   );
 
   const amount = parseEth(pendingBet.amount);
@@ -153,12 +159,12 @@ export const handleConfirmButton: ButtonHandler = async (
       value: amount.toString(),
       data: calldata,
     },
-    opts?.threadId
+    opts?.threadId,
   );
 
   await handler.sendMessage(
     channelId,
     "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet.\n\n_I'll confirm once the transaction is mined._",
-    opts
+    opts,
   );
 };

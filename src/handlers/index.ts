@@ -43,3 +43,6 @@ export {
 
 // Utility
 export { createContractInfoHandler, createUserHasBetHandler } from "./utility";
+
+// Interactions
+export { handleConfirmButton } from "./interactions/buttons/confirm";

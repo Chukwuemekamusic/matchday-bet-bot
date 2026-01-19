@@ -11,18 +11,14 @@ import {
   formatEth,
   parseEth,
   truncateAddress,
-  isBettingOpen,
   formatOutcome,
 } from "./utils/format";
-import { DBMatch, ContractBet } from "./types";
 import { config } from "./config";
 import { startScheduler } from "./scheduler";
 import {
   getLinkedWallets,
   getLinkedWalletsExcludingSmartAccount,
-  isUserAdmin,
 } from "./utils/wallet";
-import { getThreadMessageOpts } from "./utils/threadRouter";
 import {
   handleHelp,
   createBetHandler,
@@ -46,6 +42,7 @@ import {
   createClaimRefundHandler,
   createContractInfoHandler,
   createUserHasBetHandler,
+  handleConfirmButton,
   type HandlerContext,
 } from "./handlers";
 
@@ -205,171 +202,19 @@ bot.onInteractionResponse(async (handler, event) => {
       if (component.component.case === "button") {
         // Handle confirm button
         if (component.id === "confirm") {
-          console.log(
-            "✅ [INTERACTION] 'confirm' button clicked (bet confirmation)"
-          );
-
-          // Confirm button should only be for bet confirmations, not claims
-          if (!pendingBet) {
-            await handler.sendMessage(
-              channelId,
-              "❌ Bet expired or already processed. Please place a new bet with `/bet`.",
-              opts
-            );
-            return;
-          }
-
-          // Get the match
-          const match = db.getMatchById(pendingBet.match_id);
-          if (!match) {
-            db.clearPendingBet(userId);
-            await handler.sendMessage(
-              channelId,
-              "❌ Match no longer available.",
-              opts
-            );
-            return;
-          }
-
-          // Check if betting is still open
-          if (!isBettingOpen(match.kickoff_time)) {
-            db.clearPendingBet(userId);
-            await handler.sendMessage(
-              channelId,
-              "❌ Betting is now closed for this match.",
-              opts
-            );
-            return;
-          }
-
-          // Check if contract is available
-          if (!contractService.isContractAvailable()) {
-            db.clearPendingBet(userId);
-            await handler.sendMessage(
-              channelId,
-              "❌ Smart contract is not yet deployed. Please try again once the contract is live.",
-              opts
-            );
-            return;
-          }
-
-          // Create match on-chain if not exists
-          let onChainMatchId = match.on_chain_match_id;
-          if (!onChainMatchId) {
-            console.log(
-              `📝 Match not yet on-chain. Creating match: ${match.home_team} vs ${match.away_team}`
-            );
-
-            const result = await contractService.createMatch(
-              match.home_team,
-              match.away_team,
-              match.competition,
-              match.kickoff_time
-            );
-
-            // Handle errors with specific messages
-            if ("error" in result && result.error) {
-              const errorType = result.errorType;
-              const errorMsg = result.error;
-
-              console.error(
-                `❌ Match creation failed: ${errorType} - ${errorMsg}`
-              );
-
-              let userMessage = `❌ **Unable to Create Match**\n\n${errorMsg}`;
-
-              // Add specific instructions based on error type
-              if (errorType === "INSUFFICIENT_GAS") {
-                userMessage += `\n\n**What to do:**\n1. Admin needs to fund the bot treasury\n2. Your pending bet is saved\n3. Try clicking "Confirm & Sign" again in a few minutes`;
-              } else if (errorType === "NOT_MATCH_MANAGER") {
-                userMessage += `\n\n**What to do:**\n1. Admin needs to register bot as match manager\n2. Run \`/checkmanager\` for instructions\n3. Your pending bet is saved\n4. Try clicking "Confirm & Sign" again after fixing`;
-              } else if (errorType === "NONCE_ERROR") {
-                userMessage += `\n\n**What to do:**\nJust wait a few seconds and click "Confirm & Sign" again.`;
-              } else if (errorType === "RPC_TIMEOUT") {
-                userMessage += `\n\n**What to do:**\nThe network is busy. Wait a moment and click "Confirm & Sign" again.`;
-              } else {
-                userMessage += `\n\n**What to do:**\n1. Check bot logs for details\n2. Your pending bet is saved\n3. Try again or contact support`;
-              }
-
-              userMessage += `\n\n_Your pending bet expires in 5 minutes. Use \`/cancel\` to cancel it._`;
-
-              await handler.sendMessage(channelId, userMessage, opts);
-              // Don't clear pending bet - user can retry
-              return;
-            }
-
-            // Success - we have a match ID
-            if (!result.matchId) {
-              await handler.sendMessage(
-                channelId,
-                "❌ Match creation succeeded but no match ID returned. Please contact support.",
-                opts
-              );
-              return;
-            }
-
-            onChainMatchId = result.matchId;
-            db.setOnChainMatchId(match.id, onChainMatchId);
-            console.log(
-              `✅ Match ${match.id} created on-chain with ID ${onChainMatchId}, tx: ${result.txHash}`
-            );
-
-            // Notify user that match was created
-            await handler.sendMessage(
-              channelId,
-              `✅ Match created on-chain! Now sending your bet transaction...`,
-              opts
-            );
-          }
-
-          // At this point, onChainMatchId must be set
-          if (!onChainMatchId) {
-            await handler.sendMessage(
-              channelId,
-              "❌ Match ID not available. Please try again.",
-              opts
-            );
-            return;
-          }
-
-          // Generate transaction for user to sign
-          const calldata = contractService.encodePlaceBet(
-            onChainMatchId,
-            pendingBet.prediction
-          );
-
-          const amount = parseEth(pendingBet.amount);
-
-          // Encode threadId in transaction ID for later retrieval
-          const txId = `tx-${onChainMatchId}-${userId.slice(0, 8)}-${
-            opts?.threadId || "none"
-          }`;
-
-          // Send transaction request to user using service
-          await interactionService.sendTransactionInteraction(
+          // Delegate to separate confirm button handler
+          await handleConfirmButton(
             handler,
-            channelId,
-            userId,
             {
-              id: txId,
-              title: `Bet on ${match.home_team} vs ${match.away_team}`,
-              chainId: "8453", // Base mainnet
-              to: contractService.getContractAddress(),
-              value: amount.toString(),
-              data: calldata,
+              response: response,
+              channelId,
+              userId,
+              requestId,
+              components: form.components,
+              threadId,
             },
-            opts?.threadId
+            handlerContext
           );
-
-          await handler.sendMessage(
-            channelId,
-            "✅ **Transaction Request Sent!**\n\nPlease sign the transaction in your wallet.\n\n_I'll confirm once the transaction is mined._",
-            opts
-          );
-
-          // Note: Bet stats will be recorded after transaction is confirmed
-          // This happens in the transaction response handler below
-
           return;
         }
 
@@ -837,6 +682,11 @@ bot.onInteractionResponse(async (handler, event) => {
   if (response.payload.content?.case === "transaction") {
     const txResponse = response.payload.content.value;
 
+    console.log("💳 [TRANSACTION] Received transaction response");
+    console.log("  - userId:", userId);
+    console.log("  - requestId:", txResponse.requestId);
+    console.log("  - txHash:", txResponse.txHash || "NONE");
+
     // Parse threadId from transaction ID for threading
     // Transaction ID formats: "tx-{matchId}-{userIdPrefix}-{threadId}", "claim-tx-{matchId}-{userIdPrefix}-{threadId}", "refund-tx-{matchId}-{userIdPrefix}-{threadId}"
     let threadId: string | undefined;
@@ -852,6 +702,7 @@ bot.onInteractionResponse(async (handler, event) => {
 
     if (txResponse.txHash) {
       const txHash = txResponse.txHash;
+      console.log("✅ [TRANSACTION] Transaction hash received:", txHash);
 
       // Send immediate confirmation
       await handler.sendMessage(
@@ -1099,17 +950,27 @@ Your refund was successful! Check your wallet.
 
           if (!isClaimTx && !isRefundTx) {
             // Handle bet transaction (existing logic)
+            console.log("🎯 [BET TX] Processing bet transaction confirmation");
             const pendingBet = db.getPendingBet(userId);
+            console.log("  - pendingBet found:", !!pendingBet);
+
             let matchInfo = "";
 
             if (pendingBet) {
               const match = db.getMatchById(pendingBet.match_id);
+              console.log("  - match found:", !!match);
+
               if (match) {
+                console.log("  - match.id:", match.id);
+                console.log("  - match.on_chain_match_id:", match.on_chain_match_id);
+                console.log("  - pendingBet.amount:", pendingBet.amount);
+
                 const predictionDisplay = formatOutcome(pendingBet.prediction);
                 matchInfo = `\n\n**Match:** ${match.home_team} vs ${match.away_team}\n**Your Prediction:** ${predictionDisplay}\n**Stake:** ${pendingBet.amount} ETH`;
 
                 // Record the bet in user stats
                 db.recordBet(userId, pendingBet.amount);
+                console.log("✅ [BET TX] Recorded bet in user stats");
 
                 // Record the bet in bets table
                 // Determine which wallet placed the bet by checking on-chain
@@ -1118,19 +979,26 @@ Your refund was successful! Check your wallet.
                   contractService.isContractAvailable()
                 ) {
                   try {
+                    console.log("🔍 [BET TX] Looking up linked wallets...");
                     const linkedWallets = await getLinkedWallets(
                       bot,
                       userId as `0x${string}`
                     );
+                    console.log("  - linkedWallets found:", linkedWallets.length);
+                    console.log("  - wallets:", linkedWallets);
+
                     let bettorWallet: string | null = null;
 
                     for (const wallet of linkedWallets) {
+                      console.log("  - Checking wallet:", wallet);
                       const onChainBet = await contractService.getUserBet(
                         match.on_chain_match_id,
                         wallet
                       );
+                      console.log("    - onChainBet amount:", onChainBet?.amount || "0");
                       if (onChainBet && onChainBet.amount > 0n) {
                         bettorWallet = wallet;
+                        console.log("  ✅ Found bettor wallet:", wallet);
                         break;
                       }
                     }
@@ -1152,10 +1020,15 @@ Your refund was successful! Check your wallet.
                         txHash
                       );
                       console.log(
-                        `💾 Bet recorded in DB: ${userId} -> ${truncateAddress(
+                        `💾 [BET TX] Bet recorded in DB: ${userId} -> ${truncateAddress(
                           bettorWallet
                         )}`
                       );
+                    } else {
+                      console.warn("⚠️ [BET TX] No bettor wallet found!");
+                      console.warn("  - Bet was placed on-chain but could not determine which wallet");
+                      console.warn("  - Transaction confirmed but NOT recorded in database");
+                      console.warn("  - User can run /verify to recover this bet");
                     }
                   } catch (error) {
                     console.error("Failed to record bet in DB:", error);
@@ -1207,6 +1080,11 @@ Your refund was successful! Check your wallet.
             errorMessage += `Try running \`/claimable\` to see which wallet was used for each bet.`;
           } else {
             errorMessage += `Your bet was not placed. The transaction was reverted.`;
+
+            // Clear pending bet for failed bet transactions so user can retry
+            console.log("🧹 [BET TX] Clearing pending bet due to failed transaction");
+            db.clearPendingBet(userId);
+            errorMessage += `\n\n_Your pending bet has been cleared. You can place a new bet with \`/bet\`._`;
           }
 
           errorMessage += `\n\n🔗 [View on Basescan](https://basescan.org/tx/${txHash})`;

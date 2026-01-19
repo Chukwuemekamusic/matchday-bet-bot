@@ -170,7 +170,7 @@ export class InteractionService {
   }
 
   /**
-   * Send a transaction interaction request
+   * Send a transaction interaction request with retry logic
    */
   async sendTransactionInteraction(
     handler: any,
@@ -181,27 +181,33 @@ export class InteractionService {
   ): Promise<void> {
     const opts = threadId ? { threadId } : undefined;
 
-    await handler.sendInteractionRequest(
-      channelId,
-      {
-        case: "transaction",
-        value: {
-          id: config.id,
-          title: config.title,
-          content: {
-            case: "evm",
+    await retryWithBackoff(
+      async () => {
+        await handler.sendInteractionRequest(
+          channelId,
+          {
+            case: "transaction",
             value: {
-              chainId: config.chainId,
-              to: config.to,
-              value: config.value,
-              data: config.data,
-              ...(config.signerWallet && { signerWallet: config.signerWallet }),
+              id: config.id,
+              title: config.title,
+              content: {
+                case: "evm",
+                value: {
+                  chainId: config.chainId,
+                  to: config.to,
+                  value: config.value,
+                  data: config.data,
+                  ...(config.signerWallet && { signerWallet: config.signerWallet }),
+                },
+              },
             },
-          },
-        },
-      } as any,
-      hexToBytes(userId as `0x${string}`),
-      opts
+          } as any,
+          hexToBytes(userId as `0x${string}`),
+          opts
+        );
+      },
+      2, // max retries (3 total attempts)
+      500 // base delay (500ms, then 1000ms)
     );
   }
 }

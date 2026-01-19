@@ -186,7 +186,7 @@ Example: \`/bet 1 home 0.01\``,
       }
 
       // Create pending bet (store threadId for later use in interaction responses)
-      db.createPendingBet(userId, match.id, prediction, amountStr, eventId);
+      db.createPendingBet(userId, match.id, prediction, amountStr, opts?.threadId || eventId);
 
       const predictionDisplay =
         prediction === Outcome.HOME
