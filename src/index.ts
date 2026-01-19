@@ -45,6 +45,7 @@ import {
   createContractInfoHandler,
   createUserHasBetHandler,
   createResolveHandler,
+  createSyncMatchesHandler,
   handleConfirmButton,
   handleClaimCancelButton,
   handleClaimAllCancelButton,
@@ -895,6 +896,9 @@ bot.onSlashCommand("userHasBet", createUserHasBetHandler(handlerContext));
 
 // /resolve - Admin-only manual match resolution
 bot.onSlashCommand("resolve", createResolveHandler(handlerContext));
+
+// /syncmatches - Admin-only match sync
+bot.onSlashCommand("syncmatches", createSyncMatchesHandler(handlerContext));
 
 /*//////////////////////////////////////////////////////////////
                          START BOT

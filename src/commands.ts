@@ -119,11 +119,10 @@ const commands = [
     description:
       "🔧 [Admin] Manually resolve/cancel a match (by # or match code)",
   },
+  {
+    name: "syncmatches",
+    description: "[Admin] Sync on-chain match IDs and fix match codes",
+  },
 ] as const satisfies BotCommand[];
 
 export default commands;
-
-// {
-//     name: "syncmatches",
-//     description: "[Admin] Sync on-chain match IDs and fix match codes",
-//   },
