@@ -9,7 +9,7 @@ import { db } from "../../db";
 import { config } from "../../config";
 
 export const createSyncMatchesHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, eventId, threadId, userId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -19,7 +19,8 @@ export const createSyncMatchesHandler = (
       if (!(await isUserAdmin(context.bot, userId as `0x${string}`))) {
         await handler.sendMessage(
           channelId,
-          "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+          "❌ **Access Denied**\n\nThis command is only available to the bot administrator.",
+          opts,
         );
         return;
       }
@@ -28,16 +29,19 @@ export const createSyncMatchesHandler = (
 
       await handler.sendMessage(
         channelId,
-        `🔍 Syncing on-chain match IDs (${mode})...\n\nFetching matches created in last 24 hours from subgraph...`
+        `🔍 Syncing on-chain match IDs (${mode})...\n\nFetching matches created in last 24 hours from subgraph...`,
+        opts,
       );
 
       // Fetch matches created in the last 24 hours from subgraph
-      const recentMatches = await context.subgraphService.getRecentMatchCreations(24);
+      const recentMatches =
+        await context.subgraphService.getRecentMatchCreations(24);
 
       if (recentMatches.length === 0) {
         await handler.sendMessage(
           channelId,
-          "⚠️ No matches found in subgraph for the last 24 hours.\n\nThis could mean:\n- No matches were created on-chain recently\n- Subgraph is not responding\n- Check logs for errors"
+          "⚠️ No matches found in subgraph for the last 24 hours.\n\nThis could mean:\n- No matches were created on-chain recently\n- Subgraph is not responding\n- Check logs for errors",
+          opts,
         );
         return;
       }
@@ -83,7 +87,7 @@ export const createSyncMatchesHandler = (
           // Skip if already has on-chain ID
           if (bestMatch.on_chain_match_id !== null) {
             console.log(
-              `⚠️ DB match ${bestMatch.id} already has on_chain_match_id: ${bestMatch.on_chain_match_id}, skipping`
+              `⚠️ DB match ${bestMatch.id} already has on_chain_match_id: ${bestMatch.on_chain_match_id}, skipping`,
             );
             continue;
           }
@@ -97,7 +101,7 @@ export const createSyncMatchesHandler = (
           });
         } else {
           console.log(
-            `⚠️ No DB match found for on-chain match ${onChainId}: ${homeTeam} vs ${awayTeam}`
+            `⚠️ No DB match found for on-chain match ${onChainId}: ${homeTeam} vs ${awayTeam}`,
           );
         }
       }
@@ -114,7 +118,8 @@ export const createSyncMatchesHandler = (
         message += "No DB matches found to sync.\n\n";
         message += "This is expected if:\n";
         message += "- Your database doesn't have these matches yet\n";
-        message += "- Matches were created on-chain before being fetched from API\n";
+        message +=
+          "- Matches were created on-chain before being fetched from API\n";
         message += "- You're syncing between local and remote databases";
       } else {
         for (const update of updates) {
@@ -148,12 +153,13 @@ export const createSyncMatchesHandler = (
         }
       }
 
-      await handler.sendMessage(channelId, message);
+      await handler.sendMessage(channelId, message, opts);
     } catch (error) {
       console.error("Error in /syncmatches:", error);
       await handler.sendMessage(
         channelId,
-        "❌ Failed to sync matches. Check logs for details."
+        "❌ Failed to sync matches. Check logs for details.",
+        opts,
       );
     }
   };
