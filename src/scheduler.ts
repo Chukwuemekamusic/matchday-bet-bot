@@ -8,10 +8,10 @@
 import { db } from "./db";
 import { footballApi, FootballAPIService } from "./services/footballApi";
 import type { ContractService } from "./services/contract";
+import { AnnouncementService } from "./services/announcements";
+import type { CancelledMatchInfo } from "./services/announcements";
 import { Outcome } from "./types";
-import type { DBMatch } from "./types";
-import { formatEth, formatMatchDisplay } from "./utils/format";
-import { getCompetitionEmoji } from "./utils/competition";
+import { formatEth } from "./utils/format";
 import { config } from "./config";
 
 // Store intervals for cleanup
@@ -21,6 +21,7 @@ const intervals: NodeJS.Timeout[] = [];
 let botInstance: any = null;
 let contractServiceInstance: ContractService | null = null;
 let defaultChannelId: string | null = null;
+let announcementService: AnnouncementService | null = null;
 
 // Scheduler state for intelligent polling
 interface SchedulerState {
@@ -151,6 +152,14 @@ export function startScheduler(
   contractServiceInstance = contractService;
   defaultChannelId = process.env.DEFAULT_CHANNEL_ID || null;
 
+  // Initialize announcement service
+  announcementService = new AnnouncementService(
+    bot,
+    contractService,
+    db,
+    defaultChannelId
+  );
+
   console.log("📅 Starting scheduler...");
 
   // Morning fetch at 06:00 UTC daily
@@ -191,11 +200,11 @@ export function startScheduler(
 
   // Schedule daily noon posting
   setTimeout(() => {
-    postDailyMatchListings("noon");
+    announcementService?.postDailyMatchListings("noon");
     // Repeat daily
     intervals.push(
       setInterval(() => {
-        postDailyMatchListings("noon");
+        announcementService?.postDailyMatchListings("noon");
       }, 24 * 60 * 60 * 1000) // 24 hours
     );
   }, msUntilNoon);
@@ -336,7 +345,7 @@ async function morningFetch(): Promise<void> {
     console.log(`🔢 Assigned daily IDs to ${matches.length} matches`);
 
     // Post morning match listings to default channel
-    await postDailyMatchListings("morning");
+    await announcementService?.postDailyMatchListings("morning");
 
     // Update scheduler state and setup intelligent polling
     schedulerState.todaysMatches = matches.length;
@@ -427,12 +436,7 @@ async function closeExpiredBetting(): Promise<void> {
         );
 
         // Post to channel if configured
-        if (botInstance && defaultChannelId) {
-          await botInstance.sendMessage(
-            defaultChannelId,
-            `🔒 **Betting Closed**\n\n${match.home_team} vs ${match.away_team}\n\nKickoff! Good luck to all bettors! ⚽`
-          );
-        }
+        await announcementService?.postBettingClosed(match);
       }
     } catch (error) {
       console.error(`❌ Failed to close betting for match ${match.id}:`, error);
@@ -695,7 +699,7 @@ async function pollMatchResults(): Promise<void> {
             );
 
             // Post result to channel if configured
-            await postMatchResult(dbMatch, homeScore, awayScore);
+            await announcementService?.postMatchResult(dbMatch, homeScore, awayScore);
           }
         } else {
           console.error(
@@ -718,7 +722,7 @@ async function pollMatchResults(): Promise<void> {
         console.log(
           `✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team} (no on-chain bets)`
         );
-        await postMatchResult(dbMatch, homeScore, awayScore);
+        await announcementService?.postMatchResult(dbMatch, homeScore, awayScore);
       }
     } else if (matchesToResolve.length > 0) {
       // No contract, just post results
@@ -728,7 +732,7 @@ async function pollMatchResults(): Promise<void> {
         console.log(
           `✅ ${dbMatch.home_team} ${homeScore}-${awayScore} ${dbMatch.away_team}`
         );
-        await postMatchResult(dbMatch, homeScore, awayScore);
+        await announcementService?.postMatchResult(dbMatch, homeScore, awayScore);
       }
     }
 
@@ -774,124 +778,6 @@ async function pollMatchResults(): Promise<void> {
     console.log(`✅ Poll completed in ${pollDurationMs}ms`);
   } catch (error) {
     console.error("❌ Failed to poll match results:", error);
-  }
-}
-
-/**
- * Post match result to channel (if configured)
- */
-async function postMatchResult(
-  dbMatch: any,
-  homeScore: number,
-  awayScore: number
-): Promise<void> {
-  if (!botInstance || !defaultChannelId) {
-    return;
-  }
-
-  const outcome = FootballAPIService.determineOutcome(homeScore, awayScore);
-  if (outcome === null) return;
-
-  const winner =
-    outcome === Outcome.HOME
-      ? dbMatch.home_team
-      : outcome === Outcome.AWAY
-      ? dbMatch.away_team
-      : "Draw";
-
-  let poolInfo = "";
-  if (
-    dbMatch.on_chain_match_id &&
-    contractServiceInstance?.isContractAvailable()
-  ) {
-    const pools = await contractServiceInstance.getPools(
-      dbMatch.on_chain_match_id
-    );
-    const totalPool = pools ? formatEth(pools.total) : "?";
-    poolInfo = `\n💰 Total Pool: ${totalPool} ETH\n\nWinners can now claim using \`/claim\``;
-  }
-
-  await botInstance.sendMessage(
-    defaultChannelId,
-    `🏁 **Match Result**
-
-**${dbMatch.home_team} ${homeScore} - ${awayScore} ${dbMatch.away_team}**
-
-✅ Result: ${winner}${outcome !== Outcome.DRAW ? " wins!" : ""}${poolInfo}`
-  );
-}
-
-/**
- * Post daily match listings to the default channel
- * @param timeSlot - 'morning' or 'noon'
- */
-async function postDailyMatchListings(timeSlot: string): Promise<void> {
-  if (!botInstance || !defaultChannelId) {
-    console.log("⏭️ Skipping daily match listing (no bot or channel configured)");
-    return;
-  }
-
-  const today = new Date();
-  const matchDate = today.toISOString().split("T")[0]; // YYYY-MM-DD
-
-  // Check if already posted for this time slot
-  if (db.hasBeenPosted(matchDate, timeSlot)) {
-    console.log(`✅ Already posted ${timeSlot} match listings for ${matchDate}`);
-    return;
-  }
-
-  // Get today's matches
-  const matches = db.getTodaysMatches();
-
-  // Skip if no matches
-  if (matches.length === 0) {
-    console.log(`📅 No matches for ${matchDate}, skipping ${timeSlot} posting`);
-    return;
-  }
-
-  // Group matches by competition
-  const grouped = new Map<string, DBMatch[]>();
-  for (const match of matches) {
-    if (!grouped.has(match.competition)) {
-      grouped.set(match.competition, []);
-    }
-    grouped.get(match.competition)!.push(match);
-  }
-
-  // Format the date
-  const dateFormatter = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-  const formattedDate = dateFormatter.format(today);
-
-  // Build message
-  let message = `⚽ **Matches for ${formattedDate}**\n\n`;
-
-  for (const [competition, compMatches] of grouped) {
-    const emoji = getCompetitionEmoji(compMatches[0].competition_code);
-    message += `${emoji} **${competition}**\n\n`;
-
-    for (const match of compMatches) {
-      message += formatMatchDisplay(match);
-    }
-  }
-
-  message += "Use `/bet <#> <home|draw|away> <amount>` to place a bet!";
-
-  // Post to channel
-  try {
-    const result = await botInstance.sendMessage(defaultChannelId, message);
-    const messageId = result?.id || undefined;
-
-    // Record that we posted
-    db.recordPosted(matchDate, timeSlot, messageId);
-
-    console.log(`✅ Posted ${timeSlot} match listings for ${matchDate} (${matches.length} matches)`);
-  } catch (error) {
-    console.error(`❌ Failed to post ${timeSlot} match listings:`, error);
   }
 }
 
@@ -942,7 +828,7 @@ async function resolveMatchFromAPI(dbMatch: any, apiMatch: any): Promise<void> {
       );
 
       // Post result to channel if configured
-      await postMatchResult(dbMatch, homeScore, awayScore);
+      await announcementService?.postMatchResult(dbMatch, homeScore, awayScore);
     }
   } else {
     console.log(
@@ -1203,27 +1089,8 @@ async function autoCancelPostponedMatches(): Promise<void> {
   }
 
   // Send notification to channel if any matches were cancelled
-  if (cancelledCount > 0 && botInstance && defaultChannelId) {
-    try {
-      const matchList = cancelledMatches
-        .map((m) => `• **${m.homeTeam} vs ${m.awayTeam}** (${m.competition})`)
-        .join("\n");
-
-      await botInstance.sendMessage(
-        defaultChannelId,
-        `🚫 **Match${cancelledCount > 1 ? "es" : ""} Cancelled**
-
-${matchList}
-
-${cancelledCount > 1 ? "These matches were" : "This match was"} postponed and ${
-          cancelledCount > 1 ? "have" : "has"
-        } been automatically cancelled.
-
-💰 **Refunds Available:** All bettors can claim refunds using \`/claim\``
-      );
-    } catch (error) {
-      console.error("❌ Failed to send cancellation notification:", error);
-    }
+  if (cancelledCount > 0) {
+    await announcementService?.postMatchesCancelled(cancelledMatches);
   }
 
   if (cancelledCount > 0 || skippedCount > 0) {
