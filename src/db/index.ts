@@ -92,10 +92,10 @@ class DatabaseService {
       CREATE TABLE IF NOT EXISTS posted_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         match_date TEXT NOT NULL,
-        competition_code TEXT NOT NULL,
+        time_slot TEXT NOT NULL,
         towns_message_id TEXT,
         posted_at INTEGER DEFAULT (strftime('%s', 'now')),
-        UNIQUE(match_date, competition_code)
+        UNIQUE(match_date, time_slot)
       );
     `);
 
@@ -824,29 +824,34 @@ class DatabaseService {
   // ==================== POSTED MESSAGES ====================
 
   /**
-   * Check if matches for a date/competition have been posted
+   * Check if matches for a date/time slot have been posted
+   * @param matchDate - Date in YYYY-MM-DD format
+   * @param timeSlot - Time slot identifier ('morning' or 'noon')
    */
-  hasBeenPosted(matchDate: string, competitionCode: string): boolean {
+  hasBeenPosted(matchDate: string, timeSlot: string): boolean {
     const stmt = this.db.prepare(`
-      SELECT 1 FROM posted_messages 
-      WHERE match_date = ? AND competition_code = ?
+      SELECT 1 FROM posted_messages
+      WHERE match_date = ? AND time_slot = ?
     `);
-    return stmt.get(matchDate, competitionCode) !== undefined;
+    return stmt.get(matchDate, timeSlot) !== undefined;
   }
 
   /**
    * Record that matches have been posted
+   * @param matchDate - Date in YYYY-MM-DD format
+   * @param timeSlot - Time slot identifier ('morning' or 'noon')
+   * @param messageId - Optional Towns message ID
    */
   recordPosted(
     matchDate: string,
-    competitionCode: string,
+    timeSlot: string,
     messageId?: string
   ): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO posted_messages (match_date, competition_code, towns_message_id)
+      INSERT OR REPLACE INTO posted_messages (match_date, time_slot, towns_message_id)
       VALUES (?, ?, ?)
     `);
-    stmt.run(matchDate, competitionCode, messageId || null);
+    stmt.run(matchDate, timeSlot, messageId || null);
   }
 
   // ==================== BETS ====================

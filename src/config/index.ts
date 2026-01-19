@@ -82,7 +82,7 @@ export const config = {
   },
 
   // Optional channel for announcements
-  // defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
+  defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
 
   // Admin permissions
   admin: {

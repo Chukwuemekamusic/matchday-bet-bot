@@ -9,7 +9,9 @@ import { db } from "./db";
 import { footballApi, FootballAPIService } from "./services/footballApi";
 import type { ContractService } from "./services/contract";
 import { Outcome } from "./types";
-import { formatEth } from "./utils/format";
+import type { DBMatch } from "./types";
+import { formatEth, formatMatchDisplay } from "./utils/format";
+import { getCompetitionEmoji } from "./utils/competition";
 import { config } from "./config";
 
 // Store intervals for cleanup
@@ -175,6 +177,29 @@ export function startScheduler(
     );
   }, msUntil6AM);
 
+  // Noon posting at 12:00 UTC daily
+  // Calculate ms until next 12:00 UTC
+  const nextNoon = new Date();
+  nextNoon.setUTCHours(12, 0, 0, 0);
+  if (now.getUTCHours() >= 12) {
+    // If past 12 PM today, schedule for tomorrow
+    nextNoon.setUTCDate(nextNoon.getUTCDate() + 1);
+  }
+  const msUntilNoon = nextNoon.getTime() - now.getTime();
+
+  console.log(`⏰ Next noon posting: ${nextNoon.toISOString()}`);
+
+  // Schedule daily noon posting
+  setTimeout(() => {
+    postDailyMatchListings("noon");
+    // Repeat daily
+    intervals.push(
+      setInterval(() => {
+        postDailyMatchListings("noon");
+      }, 24 * 60 * 60 * 1000) // 24 hours
+    );
+  }, msUntilNoon);
+
   // Check for matches to close every minute
   intervals.push(
     setInterval(() => {
@@ -309,6 +334,9 @@ async function morningFetch(): Promise<void> {
     // Assign stable daily IDs based on kickoff order
     db.assignDailyIds();
     console.log(`🔢 Assigned daily IDs to ${matches.length} matches`);
+
+    // Post morning match listings to default channel
+    await postDailyMatchListings("morning");
 
     // Update scheduler state and setup intelligent polling
     schedulerState.todaysMatches = matches.length;
@@ -791,6 +819,80 @@ async function postMatchResult(
 
 ✅ Result: ${winner}${outcome !== Outcome.DRAW ? " wins!" : ""}${poolInfo}`
   );
+}
+
+/**
+ * Post daily match listings to the default channel
+ * @param timeSlot - 'morning' or 'noon'
+ */
+async function postDailyMatchListings(timeSlot: string): Promise<void> {
+  if (!botInstance || !defaultChannelId) {
+    console.log("⏭️ Skipping daily match listing (no bot or channel configured)");
+    return;
+  }
+
+  const today = new Date();
+  const matchDate = today.toISOString().split("T")[0]; // YYYY-MM-DD
+
+  // Check if already posted for this time slot
+  if (db.hasBeenPosted(matchDate, timeSlot)) {
+    console.log(`✅ Already posted ${timeSlot} match listings for ${matchDate}`);
+    return;
+  }
+
+  // Get today's matches
+  const matches = db.getTodaysMatches();
+
+  // Skip if no matches
+  if (matches.length === 0) {
+    console.log(`📅 No matches for ${matchDate}, skipping ${timeSlot} posting`);
+    return;
+  }
+
+  // Group matches by competition
+  const grouped = new Map<string, DBMatch[]>();
+  for (const match of matches) {
+    if (!grouped.has(match.competition)) {
+      grouped.set(match.competition, []);
+    }
+    grouped.get(match.competition)!.push(match);
+  }
+
+  // Format the date
+  const dateFormatter = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const formattedDate = dateFormatter.format(today);
+
+  // Build message
+  let message = `⚽ **Matches for ${formattedDate}**\n\n`;
+
+  for (const [competition, compMatches] of grouped) {
+    const emoji = getCompetitionEmoji(compMatches[0].competition_code);
+    message += `${emoji} **${competition}**\n\n`;
+
+    for (const match of compMatches) {
+      message += formatMatchDisplay(match);
+    }
+  }
+
+  message += "Use `/bet <#> <home|draw|away> <amount>` to place a bet!";
+
+  // Post to channel
+  try {
+    const result = await botInstance.sendMessage(defaultChannelId, message);
+    const messageId = result?.id || undefined;
+
+    // Record that we posted
+    db.recordPosted(matchDate, timeSlot, messageId);
+
+    console.log(`✅ Posted ${timeSlot} match listings for ${matchDate} (${matches.length} matches)`);
+  } catch (error) {
+    console.error(`❌ Failed to post ${timeSlot} match listings:`, error);
+  }
 }
 
 /**
