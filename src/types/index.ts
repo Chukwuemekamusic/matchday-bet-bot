@@ -243,6 +243,21 @@ export interface GetGlobalStatsResponse {
   globalStats: SubgraphGlobalStats | null;
 }
 
+export interface SubgraphMatchCreation {
+  id: string;
+  matchId: string; // On-chain match ID as string
+  homeTeam: string;
+  awayTeam: string;
+  competition: string;
+  kickoffTime: string; // BigInt timestamp as string
+  createdAt: string; // BigInt timestamp as string
+  status: "OPEN" | "CLOSED" | "RESOLVED" | "CANCELLED";
+}
+
+export interface GetRecentMatchCreationsResponse {
+  matches: SubgraphMatchCreation[];
+}
+
 // Processed claimable data (with database match info)
 export interface ClaimableMatch {
   betId: string;

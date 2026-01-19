@@ -13,6 +13,8 @@ import type {
   GetUserStatsResponse,
   GetLeaderboardResponse,
   GetGlobalStatsResponse,
+  GetRecentMatchCreationsResponse,
+  SubgraphMatchCreation,
   ClaimableData,
   ClaimableMatch,
   SubgraphUser,
@@ -129,6 +131,26 @@ const GET_GLOBAL_STATS = gql`
       totalPayouts
       uniqueBettors
       lastUpdatedAt
+    }
+  }
+`;
+
+const GET_RECENT_MATCH_CREATIONS = gql`
+  query GetRecentMatchCreations($since: BigInt!) {
+    matches(
+      where: { createdAt_gte: $since }
+      orderBy: createdAt
+      orderDirection: desc
+      first: 100
+    ) {
+      id
+      matchId
+      homeTeam
+      awayTeam
+      competition
+      kickoffTime
+      createdAt
+      status
     }
   }
 `;
@@ -432,5 +454,28 @@ export const subgraphService = {
     };
 
     return queryWithFallback(queryFn, fallbackFn);
+  },
+
+  /**
+   * Get matches created in the last N hours
+   * Used for syncing on-chain match IDs to database
+   * Falls back to empty array if subgraph fails
+   */
+  async getRecentMatchCreations(hoursAgo: number = 24): Promise<SubgraphMatchCreation[]> {
+    try {
+      const nowInSeconds = Math.floor(Date.now() / 1000);
+      const sinceTimestamp = nowInSeconds - (hoursAgo * 3600);
+
+      const response = await client.request<GetRecentMatchCreationsResponse>(
+        GET_RECENT_MATCH_CREATIONS,
+        { since: sinceTimestamp.toString() }
+      );
+
+      console.log(`✅ Fetched ${response.matches.length} matches created in last ${hoursAgo} hours from subgraph`);
+      return response.matches;
+    } catch (error) {
+      console.warn(`⚠️ Failed to fetch recent matches from subgraph:`, error);
+      return [];
+    }
   },
 };

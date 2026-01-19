@@ -6,6 +6,7 @@ import type {
 import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { isUserAdmin } from "../../utils/wallet";
 import { db } from "../../db";
+import { config } from "../../config";
 
 export const createSyncMatchesHandler = (
   context: HandlerContext
@@ -27,11 +28,19 @@ export const createSyncMatchesHandler = (
 
       await handler.sendMessage(
         channelId,
-        `🔍 Syncing on-chain match IDs (${mode})...\n\nChecking matches 19-25...`
+        `🔍 Syncing on-chain match IDs (${mode})...\n\nFetching matches created in last 24 hours from subgraph...`
       );
 
-      // Define the range of on-chain match IDs to check
-      const onChainMatchIds = [29, 30, 31, 32, 33];
+      // Fetch matches created in the last 24 hours from subgraph
+      const recentMatches = await context.subgraphService.getRecentMatchCreations(24);
+
+      if (recentMatches.length === 0) {
+        await handler.sendMessage(
+          channelId,
+          "⚠️ No matches found in subgraph for the last 24 hours.\n\nThis could mean:\n- No matches were created on-chain recently\n- Subgraph is not responding\n- Check logs for errors"
+        );
+        return;
+      }
       const updates: Array<{
         onChainId: number;
         dbMatchId: number;
@@ -42,19 +51,12 @@ export const createSyncMatchesHandler = (
         newMatchCode: string;
       }> = [];
 
-      // Check each on-chain match
-      for (const onChainId of onChainMatchIds) {
-        const onChainMatch = await context.contractService.getMatch(onChainId);
-
-        if (!onChainMatch) {
-          console.log(`⚠️ On-chain match ${onChainId} not found`);
-          continue;
-        }
-
-        // Extract match details from contract
-        const homeTeam = onChainMatch.homeTeam;
-        const awayTeam = onChainMatch.awayTeam;
-        const kickoffTime = Number(onChainMatch.kickoffTime);
+      // Check each on-chain match from subgraph
+      for (const subgraphMatch of recentMatches) {
+        const onChainId = parseInt(subgraphMatch.matchId);
+        const homeTeam = subgraphMatch.homeTeam;
+        const awayTeam = subgraphMatch.awayTeam;
+        const kickoffTime = parseInt(subgraphMatch.kickoffTime);
 
         // Find matching DB record by team names and kickoff time
         // Use getRecentMatches(7) to search last 7 days instead of just today
@@ -111,10 +113,19 @@ export const createSyncMatchesHandler = (
       }
 
       // Build result message
+      const dbPath = config.database.path.includes("/")
+        ? config.database.path.split("/").pop()
+        : config.database.path;
       let message = `🔍 Syncing on-chain match IDs (${mode})\n\n`;
+      message += `📊 Database: ${dbPath}\n`;
+      message += `🔗 Subgraph matches found: ${recentMatches.length}\n\n`;
 
       if (updates.length === 0) {
-        message += "No matches found to sync.";
+        message += "No DB matches found to sync.\n\n";
+        message += "This is expected if:\n";
+        message += "- Your database doesn't have these matches yet\n";
+        message += "- Matches were created on-chain before being fetched from API\n";
+        message += "- You're syncing between local and remote databases";
       } else {
         for (const update of updates) {
           message += `Match ${update.onChainId}: ${update.homeTeam} vs ${update.awayTeam}\n`;
