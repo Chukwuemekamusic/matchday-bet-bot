@@ -22,6 +22,7 @@ export const createResolveHandler = (
         await handler.sendMessage(
           channelId,
           "❌ **Access Denied**\n\nThis command is only available to the bot administrator.",
+          opts,
         );
         return;
       }
@@ -39,6 +40,7 @@ export const createResolveHandler = (
   \`/resolve 20260111-2\` (specific match by code)
 
 Use \`/matches\` to see today's match numbers.`,
+          opts,
         );
         return;
       }
@@ -52,7 +54,7 @@ Use \`/matches\` to see today's match numbers.`,
       });
 
       if (!lookupResult.success) {
-        await handler.sendMessage(channelId, lookupResult.errorMessage!);
+        await handler.sendMessage(channelId, lookupResult.errorMessage!, opts);
         return;
       }
 
@@ -69,6 +71,7 @@ Use \`/matches\` to see today's match numbers.`,
 **Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
 
 This match hasn't been created on-chain yet (no bets placed).`,
+          opts,
         );
         return;
       }
@@ -84,6 +87,7 @@ This match hasn't been created on-chain yet (no bets placed).`,
 **Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
 **Score:** ${match.home_score} - ${match.away_score}
 **Result:** ${formatOutcome(match.result)}`,
+          opts,
         );
         return;
       }
@@ -92,6 +96,7 @@ This match hasn't been created on-chain yet (no bets placed).`,
       await handler.sendMessage(
         channelId,
         `🔍 Fetching latest match data for **${match.home_team} vs ${match.away_team}**...`,
+        opts,
       );
 
       const apiMatch = await footballApi.getMatch(match.api_match_id);
@@ -230,6 +235,7 @@ Cannot resolve a match that hasn't finished yet.
           `❌ **No Score Available**
 
 Match is marked as finished but scores are not available yet. Please try again later.`,
+          opts,
         );
         return;
       }
@@ -243,6 +249,7 @@ Match is marked as finished but scores are not available yet. Please try again l
           `❌ **Error Determining Outcome**
 
 Could not determine match outcome from scores: ${homeScore} - ${awayScore}`,
+          opts,
         );
         return;
       }
@@ -258,6 +265,7 @@ Could not determine match outcome from scores: ${homeScore} - ${awayScore}`,
         } ${homeScore} - ${awayScore} ${
           match.away_team
         }**\n**Result:** ${formatOutcome(outcome)}`,
+        opts,
       );
 
       const result = await context.contractService.resolveMatch(
@@ -271,6 +279,7 @@ Could not determine match outcome from scores: ${homeScore} - ${awayScore}`,
           `❌ **On-Chain Resolution Failed**
 
 The match result was saved locally but the on-chain transaction failed. Check logs for details.`,
+          opts,
         );
         return;
       }
@@ -294,6 +303,7 @@ The match result was saved locally but the on-chain transaction failed. Check lo
 🔗 **Transaction:** \`${result.txHash}\`
 
 Winners can now claim their winnings using \`/claim ${matchCode}\``,
+        opts,
       );
     } catch (error) {
       console.error("Error in /resolve command:", error);
@@ -304,6 +314,7 @@ Winners can now claim their winnings using \`/claim ${matchCode}\``,
 **Error:** ${error instanceof Error ? error.message : "Unknown error"}
 
 Please check the logs for more details.`,
+        opts,
       );
     }
   };

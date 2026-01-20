@@ -121,7 +121,30 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_bets_wallet ON bets(wallet_address);
     `);
 
+    // Run migrations
+    this.runMigrations();
+
     console.log("Database initialized successfully");
+  }
+
+  /**
+   * Run database migrations
+   * Handles schema changes for existing databases
+   */
+  private runMigrations(): void {
+    // Migration 1: Add time_slot column to posted_messages table
+    // This column was added to support morning/noon posting slots
+    // Old databases created before this feature won't have this column
+    try {
+      this.db.exec(`
+        ALTER TABLE posted_messages
+        ADD COLUMN time_slot TEXT NOT NULL DEFAULT 'morning'
+      `);
+      console.log("✅ Migration: Added time_slot column to posted_messages");
+    } catch (error) {
+      // Column already exists, ignore error
+      // SQLite will throw "duplicate column name" error if column exists
+    }
   }
 
   // ==================== MATCHES ====================
