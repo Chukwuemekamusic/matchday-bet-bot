@@ -167,98 +167,22 @@ bun run build        # Type check
 ```text
 matchday_bet_bot/
 ├─ src/
-│  ├─ index.ts                    # Bot entry point
-│  ├─ commands.ts                 # Slash command definitions
-│  ├─ scheduler.ts                # Automated tasks (fetch, close, resolve)
-│  ├─ config/
-│  │  └─ index.ts                 # Environment configuration
-│  ├─ db/
-│  │  └─ index.ts                 # Database service (SQLite)
-│  ├─ handlers/
-│  │  ├─ index.ts                 # Handler exports
-│  │  ├─ types.ts                 # Handler types
-│  │  ├─ help.ts                  # Help command
-│  │  ├─ admin/                   # Admin commands
-│  │  │  ├─ fetch.ts
-│  │  │  ├─ resolve.ts
-│  │  │  ├─ dbcheck.ts
-│  │  │  ├─ botinfo.ts
-│  │  │  ├─ syncmatches.ts
-│  │  │  └─ migrate.ts
-│  │  ├─ betting/                 # Betting flow
-│  │  │  ├─ bet.ts
-│  │  │  ├─ cancel.ts
-│  │  │  └─ pending.ts
-│  │  ├─ claiming/                # Claiming flow
-│  │  │  ├─ claim.ts
-│  │  │  ├─ claim_all.ts
-│  │  │  ├─ claim_refund.ts
-│  │  │  └─ claimable.ts
-│  │  ├─ interactions/            # Button interactions
-│  │  │  ├─ router.ts
-│  │  │  ├─ types.ts
-│  │  │  └─ buttons/
-│  │  │     ├─ confirm.ts
-│  │  │     ├─ cancel.ts
-│  │  │     ├─ claim-confirm.ts
-│  │  │     ├─ claim-cancel.ts
-│  │  │     ├─ claim-all-confirm.ts
-│  │  │     ├─ claim-all-cancel.ts
-│  │  │     ├─ refund-confirm.ts
-│  │  │     └─ refund-cancel.ts
-│  │  ├─ matches/                 # Match queries
-│  │  │  ├─ matches.ts
-│  │  │  ├─ active.ts
-│  │  │  ├─ mybets.ts
-│  │  │  ├─ odds.ts
-│  │  │  ├─ verify.ts
-│  │  │  └─ winners.ts
-│  │  ├─ stats/                   # Statistics
-│  │  │  ├─ stats.ts
-│  │  │  └─ leaderboard.ts
-│  │  └─ utility/                 # Utility commands
-│  │     ├─ contractinfo.ts
-│  │     └─ userHasBet.ts
-│  ├─ services/
-│  │  ├─ contract.ts              # Smart contract interaction
-│  │  ├─ footballApi.ts           # Match data API
-│  │  ├─ subgraph.ts              # Subgraph queries
-│  │  ├─ announcements.ts         # Match announcements
-│  │  ├─ interactions.ts          # Interaction service
-│  │  ├─ matchLookup.ts           # Match resolution
-│  │  └─ matchOperations.ts       # Match operations
-│  ├─ types/
-│  │  └─ index.ts                 # TypeScript types
-│  └─ utils/
-│     ├─ format.ts                # Formatting helpers
-│     ├─ competition.ts           # League helpers
-│     ├─ balanceValidator.ts      # Balance checks
-│     ├─ retry.ts                 # Retry logic
-│     ├─ threadRouter.ts          # Thread routing
-│     └─ wallet.ts                # Wallet utilities
-├─ docs/                          # Documentation
-│  ├─ ai/
-│  │  ├─ CLAUDE.md
-│  │  └─ AGENTS.md
-│  ├─ AUTO_CANCEL_AND_RESOLVE.md
-│  ├─ AUTO_RESOLVE_FEATURE.md
-│  ├─ DEBUG_COMMANDS.md
-│  ├─ IMPLEMENTATION_SUMMARY.md
-│  ├─ PROJECT_STRUCTURE.md
-│  └─ ... (more docs)
-├─ scripts/                       # Utility scripts
-│  └─ fix-duplicate-match-ids.ts
-├─ db_commands/                   # Database utilities
-│  ├─ check_unresolved.ts
-│  └─ mark_resolved.ts
-├─ data/
-│  └─ matchday.db                 # SQLite database
-├─ .env                           # Environment variables
-├─ .env.sample                    # Environment template
-├─ package.json
-├─ tsconfig.json
-└─ README.md
+│  ├─ index.ts           # Bot entry point
+│  ├─ commands.ts        # Slash command definitions
+│  ├─ scheduler.ts       # Automated tasks
+│  ├─ handlers/          # Command handlers (admin, betting, claiming, matches, stats)
+│  ├─ services/          # External integrations (contract, API, subgraph)
+│  ├─ db/                # SQLite database layer
+│  ├─ config/            # Environment configuration
+│  ├─ types/             # TypeScript types
+│  └─ utils/             # Utilities (formatting, validation, retry logic)
+├─ docs/                 # Detailed documentation
+├─ scripts/              # Utility scripts
+├─ data/                 # SQLite database
+└─ .env                  # Environment variables
 ```
+
+> 📖 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for detailed architecture and patterns.
 
 ---
 
