@@ -94,6 +94,11 @@ const commands = [
   },
 
   {
+    name: "post",
+    description: "[Admin] Manually post daily match announcements",
+  },
+
+  {
     name: "dbcheck",
     description: "[Admin] Check database connectivity and show stats",
   },

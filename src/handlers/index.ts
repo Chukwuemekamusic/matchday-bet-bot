@@ -35,6 +35,7 @@ export { createStatsHandler, handleLeaderboard } from "./stats";
 // Admin
 export {
   createFetchHandler,
+  createPostHandler,
   createSyncMatchesHandler,
   createDBCheckHandler,
   createMigrateHandler,

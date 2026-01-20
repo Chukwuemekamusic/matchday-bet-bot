@@ -36,6 +36,7 @@ import {
   createClaimAllHandler,
   createStatsHandler,
   createFetchHandler,
+  createPostHandler,
   handleLeaderboard,
   createDBCheckHandler,
   createMigrateHandler,
@@ -141,6 +142,9 @@ bot.onSlashCommand("winners", createWinnersHandler(handlerContext));
 
 // /fetch - Admin command to manually fetch matches
 bot.onSlashCommand("fetch", createFetchHandler(handlerContext));
+
+// /post - Admin command to manually post announcements
+bot.onSlashCommand("post", createPostHandler(handlerContext));
 
 // /dbcheck - Admin command to check database connectivity
 bot.onSlashCommand("dbcheck", createDBCheckHandler(handlerContext));
