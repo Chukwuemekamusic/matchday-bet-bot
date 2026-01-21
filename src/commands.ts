@@ -116,10 +116,10 @@ const commands = [
     name: "contractinfo",
     description: "🔧 Show contract version and configuration",
   },
-  {
-    name: "botinfo",
-    description: "🔧 Show bot wallet addresses and balance",
-  },
+  // {
+  //   name: "botinfo",
+  //   description: "🔧 Show bot wallet addresses and balance",
+  // },
   {
     name: "userHasBet",
     description: "🔧 Test if user has bet on a match",

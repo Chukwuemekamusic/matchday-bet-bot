@@ -897,7 +897,7 @@ bot.onMessage(
 bot.onSlashCommand("contractinfo", createContractInfoHandler(handlerContext));
 
 // /botinfo - Show bot wallet info
-bot.onSlashCommand("botinfo", createBotInfoHandler(handlerContext));
+// bot.onSlashCommand("botinfo", createBotInfoHandler(handlerContext));
 
 // /userHasBet - Test if user has bet on a match
 bot.onSlashCommand("userHasBet", createUserHasBetHandler(handlerContext));
