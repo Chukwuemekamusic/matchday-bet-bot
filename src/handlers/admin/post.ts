@@ -72,18 +72,8 @@ export const createPostHandler = (
         return;
       }
 
-      // Check if already posted
-      if (db.hasBeenPosted(matchDate, timeSlot)) {
-        await handler.sendMessage(
-          channelId,
-          `ℹ️ **Already Posted**\n\n${timeSlot.charAt(0).toUpperCase() + timeSlot.slice(1)} announcements for ${matchDate} have already been posted.\n\nUse \`/matches\` to view today's matches instead.`,
-          opts,
-        );
-        return;
-      }
-
-      // Post the announcement
-      await announcementService.postDailyMatchListings(timeSlot);
+      // Post the announcement (manual posting bypasses time-window check)
+      await announcementService.postDailyMatchListings(timeSlot, true);
 
       await handler.sendMessage(
         channelId,

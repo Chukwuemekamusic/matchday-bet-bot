@@ -99,11 +99,6 @@ const commands = [
   },
 
   {
-    name: "clearposted",
-    description: "[Admin] Clear posted announcement records for a date",
-  },
-
-  {
     name: "dbcheck",
     description: "[Admin] Check database connectivity and show stats",
   },

@@ -150,7 +150,7 @@ export function startScheduler(
 ): void {
   botInstance = bot;
   contractServiceInstance = contractService;
-  defaultChannelId = process.env.DEFAULT_CHANNEL_ID || null;
+  defaultChannelId = config.defaultChannelId;
 
   // Initialize announcement service
   announcementService = new AnnouncementService(
@@ -200,11 +200,11 @@ export function startScheduler(
 
   // Schedule daily noon posting
   setTimeout(() => {
-    announcementService?.postDailyMatchListings("noon");
+    announcementService?.postDailyMatchListings("noon", false);
     // Repeat daily
     intervals.push(
       setInterval(() => {
-        announcementService?.postDailyMatchListings("noon");
+        announcementService?.postDailyMatchListings("noon", false);
       }, 24 * 60 * 60 * 1000) // 24 hours
     );
   }, msUntilNoon);
@@ -345,7 +345,7 @@ async function morningFetch(): Promise<void> {
     console.log(`🔢 Assigned daily IDs to ${matches.length} matches`);
 
     // Post morning match listings to default channel
-    await announcementService?.postDailyMatchListings("morning");
+    await announcementService?.postDailyMatchListings("morning", false);
 
     // Update scheduler state and setup intelligent polling
     schedulerState.todaysMatches = matches.length;

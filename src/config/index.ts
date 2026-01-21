@@ -21,14 +21,14 @@ export const config = {
   contract: {
     address: optionalEnv(
       "CONTRACT_ADDRESS",
-      "0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947"
+      "0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947",
     ),
   },
 
   implementation: {
     address: optionalEnv(
       "IMPLEMENTATION",
-      "0x626A22ecFaD621e62e1c7829e256e1C650533028"
+      "0x626A22ecFaD621e62e1c7829e256e1C650533028",
     ),
   },
 
@@ -41,7 +41,7 @@ export const config = {
   subgraph: {
     url: optionalEnv(
       "SUBGRAPH_URL",
-      "https://api.studio.thegraph.com/query/93996/matchdaybet-2/version/latest"
+      "https://api.studio.thegraph.com/query/93996/matchdaybet-2/version/latest",
     ),
   },
 
@@ -50,11 +50,11 @@ export const config = {
     apiKey: requireEnv("FOOTBALL_API_KEY"),
     baseUrl: optionalEnv(
       "FOOTBALL_API_BASE_URL",
-      "https://api.football-data.org/v4"
+      "https://api.football-data.org/v4",
     ),
     supportedCompetitions: optionalEnv(
       "SUPPORTED_COMPETITIONS",
-      "2021,2014,2002,2019,2015,2001"
+      "2021,2014,2002,2019,2015,2001",
     )
       .split(",")
       .map((id) => parseInt(id.trim())),
@@ -77,18 +77,21 @@ export const config = {
     // Delay before auto-cancelling same-day postponed matches (in seconds)
     // Default: 1 hour (3600 seconds)
     postponementDelay: parseInt(
-      optionalEnv("POSTPONEMENT_CANCEL_DELAY", "3600")
+      optionalEnv("POSTPONEMENT_CANCEL_DELAY", "3600"),
     ),
   },
 
   // Optional channel for announcements
-  defaultChannelId: process.env.DEFAULT_CHANNEL_ID || null,
+  defaultChannelId: optionalEnv(
+    "DEFAULT_CHANNEL_ID",
+    "206870d50263b4ab420b13c3c03af370b46f57be0aa3b744c73dcaff5e6828ad",
+  ),
 
   // Admin permissions
   admin: {
     userId: optionalEnv(
       "ADMIN_USER_ID",
-      "0xb17B2CF146890336E383B891DC3D2F636B20a294"
+      "0xb17B2CF146890336E383B891DC3D2F636B20a294",
     ), // Admin's Ethereum address (0x...)
   },
 };

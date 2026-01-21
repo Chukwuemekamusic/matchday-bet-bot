@@ -44,10 +44,33 @@ export class AnnouncementService {
   }
 
   /**
+   * Check if current time is within posting window for given time slot
+   * @param timeSlot - 'morning' or 'noon'
+   * @returns true if within 15-minute posting window
+   */
+  private isWithinPostingWindow(timeSlot: string): boolean {
+    const now = new Date();
+    const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+
+    if (timeSlot === "morning") {
+      return hour === 6 && minute < 15;
+    }
+    if (timeSlot === "noon") {
+      return hour === 12 && minute < 15;
+    }
+    return false;
+  }
+
+  /**
    * Post daily match listings to the default channel
    * @param timeSlot - 'morning' or 'noon'
+   * @param isManual - true if manually triggered via /post command (bypasses time window check)
    */
-  async postDailyMatchListings(timeSlot: string): Promise<void> {
+  async postDailyMatchListings(
+    timeSlot: string,
+    isManual: boolean = false,
+  ): Promise<void> {
     if (!this.isAvailable()) {
       console.log(
         "⏭️ Skipping daily match listing (no bot or channel configured)"
@@ -58,10 +81,10 @@ export class AnnouncementService {
     const today = new Date();
     const matchDate = today.toISOString().split("T")[0]; // YYYY-MM-DD
 
-    // Check if already posted for this time slot
-    if (this.db.hasBeenPosted(matchDate, timeSlot)) {
+    // Time-window check (skip for manual posts)
+    if (!isManual && !this.isWithinPostingWindow(timeSlot)) {
       console.log(
-        `✅ Already posted ${timeSlot} match listings for ${matchDate}`
+        `⏭️ Outside ${timeSlot} posting window (${today.getUTCHours()}:${today.getUTCMinutes().toString().padStart(2, "0")} UTC), skipping`
       );
       return;
     }
@@ -111,14 +134,11 @@ export class AnnouncementService {
 
     // Post to channel
     try {
-      const result = await this.bot.sendMessage(this.channelId, message);
-      const messageId = result?.id || undefined;
-
-      // Record that we posted
-      this.db.recordPosted(matchDate, timeSlot, messageId);
+      await this.bot.sendMessage(this.channelId, message);
 
       console.log(
-        `✅ Posted ${timeSlot} match listings for ${matchDate} (${matches.length} matches)`
+        `✅ Posted ${timeSlot} match listings for ${matchDate} ` +
+        `(${matches.length} matches, channel: ${this.channelId?.substring(0, 8)}...)`
       );
     } catch (error) {
       console.error(`❌ Failed to post ${timeSlot} match listings:`, error);
