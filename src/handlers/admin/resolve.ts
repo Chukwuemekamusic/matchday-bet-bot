@@ -9,6 +9,7 @@ import { db } from "../../db";
 import { matchLookup } from "../../services/matchLookup";
 import { footballApi, FootballAPIService } from "../../services/footballApi";
 import { formatOutcome, formatEth } from "../../utils/format";
+import { subgraphService } from "../../services/subgraph";
 
 export const createResolveHandler = (
   context: HandlerContext,
@@ -76,20 +77,88 @@ This match hasn't been created on-chain yet (no bets placed).`,
         return;
       }
 
-      // Check if already resolved
+      // Check if already resolved (with subgraph validation)
       if (match.status === "FINISHED" && match.result !== null) {
         const matchDisplay =
           match.match_code || `#${match.daily_id || match.id}`;
-        await handler.sendMessage(
-          channelId,
-          `ℹ️ **Match Already Resolved**
+
+        // Query subgraph to verify on-chain state
+        const onChainMatch = await subgraphService.getMatch(
+          match.on_chain_match_id!.toString()
+        );
+
+        if (onChainMatch?.status === "RESOLVED") {
+          // Convert subgraph result string to Outcome enum
+          const onChainResultEnum = onChainMatch.result === "HOME" ? 1
+            : onChainMatch.result === "DRAW" ? 2
+            : onChainMatch.result === "AWAY" ? 3
+            : 0;
+
+          // Match is resolved on-chain - check for conflicts
+          if (onChainResultEnum !== match.result) {
+            // CONFLICT: DB and on-chain disagree
+            await handler.sendMessage(
+              channelId,
+              `⚠️ **CONFLICT DETECTED**
+
+**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
+
+**Database result:** ${formatOutcome(match.result)}
+**On-chain result:** ${formatOutcome(onChainResultEnum)}
+
+⚡ On-chain is source of truth - aligning database...`,
+              opts,
+            );
+
+            // Align DB with on-chain
+            const onChainHomeScore = onChainMatch.homeScore ? parseInt(onChainMatch.homeScore) : match.home_score!;
+            const onChainAwayScore = onChainMatch.awayScore ? parseInt(onChainMatch.awayScore) : match.away_score!;
+
+            db.updateMatchResult(
+              match.id,
+              onChainHomeScore,
+              onChainAwayScore,
+              onChainResultEnum
+            );
+            db.markMatchOnChainResolved(match.id);
+
+            await handler.sendMessage(
+              channelId,
+              `✅ Database updated to match on-chain state.
+
+**Corrected result:** ${formatOutcome(onChainResultEnum)}`,
+              opts,
+            );
+            return;
+          }
+
+          // No conflict - truly already resolved
+          await handler.sendMessage(
+            channelId,
+            `ℹ️ **Match Already Resolved**
 
 **Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
 **Score:** ${match.home_score} - ${match.away_score}
-**Result:** ${formatOutcome(match.result)}`,
-          opts,
-        );
-        return;
+**Result:** ${formatOutcome(match.result)}
+✅ Verified on-chain`,
+            opts,
+          );
+          return;
+        } else {
+          // DB says resolved but on-chain doesn't - retry resolution
+          await handler.sendMessage(
+            channelId,
+            `⚠️ **DB/On-Chain Mismatch**
+
+**Match ${matchDisplay}:** ${match.home_team} vs ${match.away_team}
+**Database:** Marked as resolved
+**On-chain:** Not resolved
+
+⚡ Retrying on-chain resolution...`,
+            opts,
+          );
+          // Continue to resolution flow below
+        }
       }
 
       // Fetch latest match data from API

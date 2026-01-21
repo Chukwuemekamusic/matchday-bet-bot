@@ -20,6 +20,14 @@ import type {
   SubgraphUser,
   SubgraphGlobalStats,
   Outcome,
+  GetMatchResolutionSkipsResponse,
+  GetBatchResolutionSummaryResponse,
+  GetBatchResolutionSummariesResponse,
+  SubgraphMatchResolutionSkip,
+  SubgraphBatchResolutionSummary,
+  SubgraphMatch,
+  GetMatchResponse,
+  SkipReason,
 } from "../types/index.js";
 
 // GraphQL client
@@ -151,6 +159,91 @@ const GET_RECENT_MATCH_CREATIONS = gql`
       kickoffTime
       createdAt
       status
+    }
+  }
+`;
+
+// ============ V3 Queries ============
+
+const GET_MATCH_RESOLUTION_SKIPS_BY_TX = gql`
+  query GetMatchResolutionSkipsByTx($txHash: String!) {
+    matchResolutionSkips(
+      where: { transactionHash: $txHash }
+      orderBy: timestamp
+      orderDirection: desc
+    ) {
+      id
+      match {
+        id
+        matchId
+        homeTeam
+        awayTeam
+        status
+        result
+      }
+      skipReason
+      timestamp
+      blockNumber
+      transactionHash
+    }
+  }
+`;
+
+const GET_BATCH_RESOLUTION_SUMMARY_BY_TX = gql`
+  query GetBatchResolutionSummaryByTx($txHash: String!) {
+    batchResolutionSummaries(
+      where: { transactionHash: $txHash }
+      first: 1
+    ) {
+      id
+      matchIds
+      results
+      resolvedCount
+      skippedCount
+      timestamp
+      blockNumber
+      transactionHash
+    }
+  }
+`;
+
+const GET_RECENT_BATCH_SUMMARIES = gql`
+  query GetRecentBatchSummaries($limit: Int!) {
+    batchResolutionSummaries(
+      first: $limit
+      orderBy: timestamp
+      orderDirection: desc
+    ) {
+      id
+      matchIds
+      results
+      resolvedCount
+      skippedCount
+      timestamp
+      blockNumber
+      transactionHash
+    }
+  }
+`;
+
+const GET_MATCH = gql`
+  query GetMatch($matchId: String!) {
+    match(id: $matchId) {
+      id
+      matchId
+      homeTeam
+      awayTeam
+      competition
+      kickoffTime
+      status
+      result
+      homeScore
+      awayScore
+      totalPool
+      homeBets
+      drawBets
+      awayBets
+      createdAt
     }
   }
 `;
@@ -476,6 +569,98 @@ export const subgraphService = {
     } catch (error) {
       console.warn(`⚠️ Failed to fetch recent matches from subgraph:`, error);
       return [];
+    }
+  },
+
+  // ============ V3 Methods ============
+
+  /**
+   * Get match resolution skip events for a specific transaction
+   * Used to detect result conflicts and other skip reasons after batch resolution
+   */
+  async getMatchResolutionSkipsByTx(txHash: string): Promise<SubgraphMatchResolutionSkip[]> {
+    try {
+      const response = await client.request<GetMatchResolutionSkipsResponse>(
+        GET_MATCH_RESOLUTION_SKIPS_BY_TX,
+        { txHash }
+      );
+
+      return response.matchResolutionSkips;
+    } catch (error) {
+      console.warn(`⚠️ Failed to fetch match resolution skips for tx ${txHash}:`, error);
+      return [];
+    }
+  },
+
+  /**
+   * Get batch resolution summary for a specific transaction
+   * Returns counts of resolved and skipped matches
+   */
+  async getBatchResolutionSummaryByTx(txHash: string): Promise<SubgraphBatchResolutionSummary | null> {
+    try {
+      const response = await client.request<GetBatchResolutionSummaryResponse>(
+        GET_BATCH_RESOLUTION_SUMMARY_BY_TX,
+        { txHash }
+      );
+
+      return response.batchResolutionSummary;
+    } catch (error) {
+      console.warn(`⚠️ Failed to fetch batch resolution summary for tx ${txHash}:`, error);
+      return null;
+    }
+  },
+
+  /**
+   * Get recent batch resolution summaries
+   * Useful for monitoring batch operation efficiency
+   */
+  async getRecentBatchSummaries(limit: number = 10): Promise<SubgraphBatchResolutionSummary[]> {
+    try {
+      const response = await client.request<GetBatchResolutionSummariesResponse>(
+        GET_RECENT_BATCH_SUMMARIES,
+        { limit }
+      );
+
+      return response.batchResolutionSummaries;
+    } catch (error) {
+      console.warn(`⚠️ Failed to fetch recent batch summaries:`, error);
+      return [];
+    }
+  },
+
+  /**
+   * Check if a transaction has any result conflict skips
+   * Returns true if ALREADY_RESOLVED_DIFFERENT_RESULT was detected
+   */
+  async hasResultConflict(txHash: string): Promise<boolean> {
+    const skips = await this.getMatchResolutionSkipsByTx(txHash);
+    return skips.some(skip => skip.skipReason === "ALREADY_RESOLVED_DIFFERENT_RESULT");
+  },
+
+  /**
+   * Get result conflict details for a transaction
+   * Returns matches that had result conflicts
+   */
+  async getResultConflicts(txHash: string): Promise<SubgraphMatchResolutionSkip[]> {
+    const skips = await this.getMatchResolutionSkipsByTx(txHash);
+    return skips.filter(skip => skip.skipReason === "ALREADY_RESOLVED_DIFFERENT_RESULT");
+  },
+
+  /**
+   * Get a single match by its on-chain match ID
+   * Used for verifying match state during resolution
+   */
+  async getMatch(matchId: string): Promise<SubgraphMatch | null> {
+    try {
+      const response = await client.request<GetMatchResponse>(
+        GET_MATCH,
+        { matchId }
+      );
+
+      return response.match;
+    } catch (error) {
+      console.warn(`⚠️ Failed to fetch match ${matchId} from subgraph:`, error);
+      return null;
     }
   },
 };

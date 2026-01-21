@@ -5,389 +5,18 @@ import {
   decodeEventLog,
   type PublicClient,
   type Address,
+  type Abi,
 } from "viem";
 import { execute } from "viem/experimental/erc7821";
 import { base } from "viem/chains";
 import config from "../config";
 import { Outcome, ContractMatch, ContractBet } from "../types";
 import { db } from "../db";
+import MatchDayBetV3ABI from "../contracts/MatchDayBetV3.abi.json";
+import { subgraphService } from "./subgraph";
 
-// Contract ABI (JSON format for complex types)
-export const CONTRACT_ABI = [
-  // Read functions with struct returns
-  {
-    type: "function",
-    name: "getMatch",
-    stateMutability: "view",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "matchId", type: "uint256" },
-          { name: "kickoffTime", type: "uint256" },
-          { name: "totalPool", type: "uint256" },
-          { name: "homePool", type: "uint256" },
-          { name: "drawPool", type: "uint256" },
-          { name: "awayPool", type: "uint256" },
-          { name: "homeBetCount", type: "uint256" },
-          { name: "drawBetCount", type: "uint256" },
-          { name: "awayBetCount", type: "uint256" },
-          { name: "platformFeeAmount", type: "uint256" },
-          { name: "result", type: "uint8" },
-          { name: "status", type: "uint8" },
-          { name: "homeTeam", type: "string" },
-          { name: "awayTeam", type: "string" },
-          { name: "competition", type: "string" },
-        ],
-      },
-    ],
-  },
-  {
-    type: "function",
-    name: "getUserBet",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "bettor", type: "address" },
-          { name: "amount", type: "uint256" },
-          { name: "prediction", type: "uint8" },
-          { name: "claimed", type: "bool" },
-        ],
-      },
-    ],
-  },
-  // Read functions with multiple returns
-  {
-    type: "function",
-    name: "getOdds",
-    stateMutability: "view",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [
-      { name: "homeOdds", type: "uint256" },
-      { name: "drawOdds", type: "uint256" },
-      { name: "awayOdds", type: "uint256" },
-    ],
-  },
-  {
-    type: "function",
-    name: "getPools",
-    stateMutability: "view",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [
-      { name: "total", type: "uint256" },
-      { name: "home", type: "uint256" },
-      { name: "draw", type: "uint256" },
-      { name: "away", type: "uint256" },
-    ],
-  },
-  {
-    type: "function",
-    name: "hasUserBet",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "calculatePotentialWinnings",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "outcome", type: "uint8" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "nextMatchId",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "minStake",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "maxStake",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "platformFeeBps",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "getBetCounts",
-    stateMutability: "view",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [
-      { name: "homeBets", type: "uint256" },
-      { name: "drawBets", type: "uint256" },
-      { name: "awayBets", type: "uint256" },
-    ],
-  },
-  {
-    type: "function",
-    name: "matchManagers",
-    stateMutability: "view",
-    inputs: [{ name: "", type: "address" }],
-    outputs: [{ name: "", type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "isMatchManager",
-    stateMutability: "view",
-    inputs: [{ name: "manager", type: "address" }],
-    outputs: [{ name: "", type: "bool" }],
-  },
-  {
-    type: "function",
-    name: "owner",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
-  {
-    type: "function",
-    name: "accumulatedFees",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "version",
-    stateMutability: "pure",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
-  },
-
-  // Write functions
-  {
-    type: "function",
-    name: "createMatch",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "homeTeam", type: "string" },
-      { name: "awayTeam", type: "string" },
-      { name: "competition", type: "string" },
-      { name: "kickoffTime", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "placeBet",
-    stateMutability: "payable",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "prediction", type: "uint8" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "closeBetting",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "resolveMatch",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "result", type: "uint8" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "batchResolveMatches",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "matchIds", type: "uint256[]" },
-      { name: "results", type: "uint8[]" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "cancelMatch",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "reason", type: "string" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "claimWinnings",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "claimRefund",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "matchId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "emergencyPause",
-    stateMutability: "nonpayable",
-    inputs: [],
-    outputs: [],
-  },
-
-  // Events
-  {
-    type: "event",
-    name: "MatchCreated",
-    inputs: [
-      { name: "matchId", type: "uint256", indexed: true },
-      { name: "homeTeam", type: "string", indexed: false },
-      { name: "awayTeam", type: "string", indexed: false },
-      { name: "competition", type: "string", indexed: false },
-      { name: "kickoffTime", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "BetPlaced",
-    inputs: [
-      { name: "matchId", type: "uint256", indexed: true },
-      { name: "bettor", type: "address", indexed: true },
-      { name: "prediction", type: "uint8", indexed: false },
-      { name: "amount", type: "uint256", indexed: false },
-      { name: "newPoolTotal", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "BettingClosed",
-    inputs: [{ name: "matchId", type: "uint256", indexed: true }],
-  },
-  {
-    type: "event",
-    name: "MatchResolved",
-    inputs: [
-      { name: "matchId", type: "uint256", indexed: true },
-      { name: "result", type: "uint8", indexed: false },
-      { name: "totalPool", type: "uint256", indexed: false },
-      { name: "winnerPool", type: "uint256", indexed: false },
-      { name: "platformFee", type: "uint256", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "MatchCancelled",
-    inputs: [
-      { name: "matchId", type: "uint256", indexed: true },
-      { name: "reason", type: "string", indexed: false },
-    ],
-  },
-  {
-    type: "event",
-    name: "WinningsClaimed",
-    inputs: [
-      { name: "matchId", type: "uint256", indexed: true },
-      { name: "bettor", type: "address", indexed: true },
-      { name: "amount", type: "uint256", indexed: false },
-      { name: "profit", type: "uint256", indexed: false },
-    ],
-  },
-
-  // V2 Functions - Enhanced claim and batch operations
-  {
-    type: "function",
-    name: "getClaimStatus",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "canClaim", type: "bool" },
-          { name: "claimType", type: "uint8" }, // 0 = none, 1 = winnings, 2 = refund
-          { name: "amount", type: "uint256" },
-        ],
-      },
-    ],
-  },
-  {
-    type: "function",
-    name: "getUnclaimedWinnings",
-    stateMutability: "view",
-    inputs: [{ name: "user", type: "address" }],
-    outputs: [
-      { name: "matchIds", type: "uint256[]" },
-      { name: "amounts", type: "uint256[]" },
-    ],
-  },
-  {
-    type: "function",
-    name: "getClaimableAmount",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchId", type: "uint256" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "getBatchClaimableAmounts",
-    stateMutability: "view",
-    inputs: [
-      { name: "matchIds", type: "uint256[]" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [{ name: "", type: "uint256[]" }],
-  },
-  {
-    type: "function",
-    name: "batchClaimWinnings",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "matchIds", type: "uint256[]" }],
-    outputs: [{ name: "totalPayout", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "batchClaimRefunds",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "matchIds", type: "uint256[]" }],
-    outputs: [{ name: "totalRefund", type: "uint256" }],
-  },
-] as const;
+// Contract ABI - V3 with idempotent batch operations
+export const CONTRACT_ABI = MatchDayBetV3ABI as Abi;
 
 class ContractService {
   private publicClient: PublicClient;
@@ -927,8 +556,8 @@ class ContractService {
             topics: log.topics,
           });
 
-          if (decoded.eventName === "MatchCreated") {
-            matchId = Number(decoded.args.matchId);
+          if (decoded.eventName === "MatchCreated" && decoded.args) {
+            matchId = Number((decoded.args as any).matchId);
             console.log(
               `✅ Match created with ID: ${matchId} (from MatchCreated event)`
             );
@@ -1239,16 +868,50 @@ class ContractService {
         return null;
       }
 
-      // Mark all matches as on-chain resolved in database
+      // Query subgraph to check which matches were actually resolved vs skipped
+      const [summary, skips] = await Promise.all([
+        subgraphService.getBatchResolutionSummaryByTx(hash),
+        subgraphService.getMatchResolutionSkipsByTx(hash),
+      ]);
+
+      // Create set of skipped match IDs for fast lookup
+      const skippedMatchIds = new Set(
+        skips
+          .filter((s) => s.match !== null)
+          .map((s) => s.match!.matchId)
+      );
+
+      // Mark only successfully resolved matches in database
+      let resolvedCount = 0;
       for (const match of matches) {
-        if (match.dbMatchId) {
+        if (match.dbMatchId && !skippedMatchIds.has(match.matchId.toString())) {
           db.markMatchOnChainResolved(match.dbMatchId);
+          resolvedCount++;
         }
       }
 
+      // Log results
       console.log(
-        `✅ Successfully resolved ${matches.length} matches in batch`
+        `✅ Batch resolution complete: ${resolvedCount}/${matches.length} matches resolved`
       );
+
+      if (skips.length > 0) {
+        console.warn(`⚠️ ${skips.length} match(es) skipped in batch:`);
+        for (const skip of skips) {
+          if (skip.match) {
+            console.warn(
+              `   • Match #${skip.match.matchId} (${skip.match.homeTeam} vs ${skip.match.awayTeam}): ${skip.skipReason}`
+            );
+          }
+        }
+      }
+
+      if (summary) {
+        console.log(
+          `   Subgraph summary: ${summary.resolvedCount} resolved, ${summary.skippedCount} skipped`
+        );
+      }
+
       return { txHash: hash };
     } catch (error) {
       console.error(`Failed to batch resolve ${matches.length} matches`, error);

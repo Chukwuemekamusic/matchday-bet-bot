@@ -608,6 +608,41 @@ class DatabaseService {
   }
 
   /**
+   * Get finished matches that haven't been resolved on-chain yet
+   * Used for smart batching decisions
+   */
+  getFinishedUnresolvedMatches(): DBMatch[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+        AND status = 'FINISHED'
+        AND result IS NOT NULL
+        AND on_chain_resolved = 0
+      ORDER BY resolved_at ASC
+    `);
+    return stmt.all() as DBMatch[];
+  }
+
+  /**
+   * Get matches expected to finish within the specified time window
+   * Used to determine if it's worth waiting to batch resolutions
+   * @param windowSeconds - Time window in seconds from now
+   */
+  getMatchesFinishingSoon(windowSeconds: number): DBMatch[] {
+    const now = Math.floor(Date.now() / 1000);
+    const typicalMatchDuration = 95 * 60; // 95 minutes
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+        AND status NOT IN ('FINISHED', 'CANCELLED', 'POSTPONED')
+        AND result IS NULL
+        AND (kickoff_time + ?) <= (? + ?)
+      ORDER BY kickoff_time ASC
+    `);
+    return stmt.all(typicalMatchDuration, now, windowSeconds) as DBMatch[];
+  }
+
+  /**
    * Update match pool
    */
   updateMatchPool(matchId: number, totalPool: string): void {

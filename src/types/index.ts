@@ -284,3 +284,123 @@ export interface ClaimableData {
   totalWinningsAmount: string;
   totalRefundsAmount: string;
 }
+
+// ============ V3 Contract Types ============
+
+// Skip reason enum matching the V3 smart contract
+export enum SkipReason {
+  NONE = 0,
+  ALREADY_RESOLVED_SAME_RESULT = 1,
+  ALREADY_RESOLVED_DIFFERENT_RESULT = 2,
+  ALREADY_CLOSED = 3,
+  ALREADY_CANCELLED = 4,
+  MATCH_NOT_FOUND = 5,
+  MATCH_IS_RESOLVED = 6,
+  MATCH_IS_CANCELLED = 7,
+  KICKOFF_NOT_REACHED = 8,
+  INVALID_OUTCOME = 9,
+}
+
+// Display names for skip reasons
+export const SKIP_REASON_NAMES: Record<SkipReason, string> = {
+  [SkipReason.NONE]: "None",
+  [SkipReason.ALREADY_RESOLVED_SAME_RESULT]: "Already Resolved (Same Result)",
+  [SkipReason.ALREADY_RESOLVED_DIFFERENT_RESULT]: "Already Resolved (Different Result)",
+  [SkipReason.ALREADY_CLOSED]: "Already Closed",
+  [SkipReason.ALREADY_CANCELLED]: "Already Cancelled",
+  [SkipReason.MATCH_NOT_FOUND]: "Match Not Found",
+  [SkipReason.MATCH_IS_RESOLVED]: "Match Already Resolved",
+  [SkipReason.MATCH_IS_CANCELLED]: "Match Already Cancelled",
+  [SkipReason.KICKOFF_NOT_REACHED]: "Kickoff Not Reached",
+  [SkipReason.INVALID_OUTCOME]: "Invalid Outcome",
+};
+
+// ============ V3 Subgraph Types ============
+
+export interface SubgraphMatchResolutionSkip {
+  id: string; // txHash-logIndex-matchId
+  match: {
+    id: string;
+    matchId: string;
+    homeTeam: string;
+    awayTeam: string;
+    status: string;
+    result: string;
+  } | null; // Can be null if MATCH_NOT_FOUND
+  skipReason: string; // Enum as string
+  timestamp: string;
+  blockNumber: string;
+  transactionHash: string;
+}
+
+export interface SubgraphBatchResolutionSummary {
+  id: string; // txHash-logIndex
+  matchIds: string[]; // Array of match IDs
+  results: string[]; // Array of outcomes
+  resolvedCount: string;
+  skippedCount: string;
+  timestamp: string;
+  blockNumber: string;
+  transactionHash: string;
+}
+
+export interface SubgraphMatch {
+  id: string;
+  matchId: string;
+  homeTeam: string;
+  awayTeam: string;
+  competition: string;
+  kickoffTime: string;
+  status: string;
+  result: string | null;
+  homeScore: string | null;
+  awayScore: string | null;
+  totalPool: string;
+  homeBets: string;
+  drawBets: string;
+  awayBets: string;
+  createdAt: string;
+}
+
+export interface GetMatchResponse {
+  match: SubgraphMatch | null;
+}
+
+export interface SubgraphMatchCancellationSkip {
+  id: string; // txHash-logIndex-matchId
+  match: {
+    id: string;
+    matchId: string;
+    homeTeam: string;
+    awayTeam: string;
+    status: string;
+  } | null;
+  skipReason: string;
+  timestamp: string;
+  blockNumber: string;
+  transactionHash: string;
+}
+
+export interface SubgraphBatchCancellationSummary {
+  id: string;
+  matchIds: string[];
+  reason: string;
+  cancelledCount: string;
+  skippedCount: string;
+  timestamp: string;
+  blockNumber: string;
+  transactionHash: string;
+}
+
+// Query response types for V3
+export interface GetMatchResolutionSkipsResponse {
+  matchResolutionSkips: SubgraphMatchResolutionSkip[];
+}
+
+export interface GetBatchResolutionSummaryResponse {
+  batchResolutionSummary: SubgraphBatchResolutionSummary | null;
+}
+
+export interface GetBatchResolutionSummariesResponse {
+  batchResolutionSummaries: SubgraphBatchResolutionSummary[];
+}

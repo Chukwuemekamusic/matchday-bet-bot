@@ -10,6 +10,7 @@ import { footballApi, FootballAPIService } from "./services/footballApi";
 import type { ContractService } from "./services/contract";
 import { AnnouncementService } from "./services/announcements";
 import type { CancelledMatchInfo } from "./services/announcements";
+import { subgraphService } from "./services/subgraph";
 import { Outcome } from "./types";
 import { formatEth } from "./utils/format";
 import { config } from "./config";
@@ -54,14 +55,122 @@ function calculateExpectedFinishTime(kickoffTime: number): number {
 }
 
 /**
+ * Calculate smart batching delay for finished matches
+ * Decides whether to resolve matches immediately or wait to batch with upcoming finishes
+ * Strategy:
+ * - Resolve immediately if: no finished matches, already have 3+ matches (good batch),
+ *   no upcoming matches, or max wait time exceeded
+ * - Wait if: 1-2 finished matches + matches finishing soon within window
+ * @returns { delayMs: number, reason: string } - delay in milliseconds and reason for decision
+ */
+function calculateSmartBatchingDelay(): {
+  delayMs: number;
+  reason: string;
+} {
+  if (!config.smartBatching.enabled) {
+    return { delayMs: 0, reason: "smart_batching_disabled" };
+  }
+
+  const finishedMatches = db.getFinishedUnresolvedMatches();
+  const now = Math.floor(Date.now() / 1000);
+
+  // No finished matches - no need to poll for resolution
+  if (finishedMatches.length === 0) {
+    return { delayMs: 0, reason: "no_finished_matches" };
+  }
+
+  // Already have a good batch size (3+) - resolve now for efficiency
+  if (finishedMatches.length >= config.smartBatching.minBatchSize) {
+    console.log(
+      `📦 Good batch size (${finishedMatches.length} matches) - resolving now`
+    );
+    return { delayMs: 0, reason: "sufficient_batch_size" };
+  }
+
+  // Check for upcoming matches within window
+  const upcomingMatches = db.getMatchesFinishingSoon(
+    config.smartBatching.nearbyMatchWindow
+  );
+
+  if (upcomingMatches.length === 0) {
+    // No matches finishing soon - resolve now
+    console.log(
+      `⚡ No upcoming matches within ${config.smartBatching.nearbyMatchWindow / 60}min window - resolving ${finishedMatches.length} match(es) now`
+    );
+    return { delayMs: 0, reason: "no_upcoming_matches" };
+  }
+
+  // Check if oldest finished match exceeded max wait time
+  const oldestFinished = finishedMatches[0]; // Ordered by resolved_at ASC
+  const oldestFinishedTime = oldestFinished.resolved_at || now;
+  const waitTimeSoFar = now - oldestFinishedTime;
+
+  if (waitTimeSoFar >= config.smartBatching.maxWaitTime) {
+    // Max wait exceeded - resolve now
+    console.log(
+      `⏰ Max wait time (${config.smartBatching.maxWaitTime / 60}min) exceeded - resolving ${finishedMatches.length} match(es) now`
+    );
+    return { delayMs: 0, reason: "max_wait_exceeded" };
+  }
+
+  // Calculate when next match is expected to finish
+  const nextFinish = Math.min(
+    ...upcomingMatches.map((m) => calculateExpectedFinishTime(m.kickoff_time))
+  );
+  const timeUntilNextFinish = nextFinish - now;
+
+  // Worth waiting if next match finishing within window and we haven't exceeded max wait
+  const remainingWaitTime = config.smartBatching.maxWaitTime - waitTimeSoFar;
+  if (timeUntilNextFinish <= remainingWaitTime) {
+    const waitMinutes = Math.ceil(timeUntilNextFinish / 60);
+    console.log(
+      `⏳ Smart batching: Waiting ${waitMinutes} min to batch ${finishedMatches.length} finished + ${upcomingMatches.length} upcoming match(es)`
+    );
+    return {
+      delayMs: timeUntilNextFinish * 1000,
+      reason: "waiting_for_nearby_finish",
+    };
+  }
+
+  // Next match too far - resolve now
+  console.log(
+    `⚡ Next match too far (${Math.ceil(timeUntilNextFinish / 60)}min) - resolving ${finishedMatches.length} match(es) now`
+  );
+  return { delayMs: 0, reason: "optimize_for_latency" };
+}
+
+/**
  * Calculate next optimal poll time based on unresolved matches
  * Strategy:
+ * - First check smart batching for finished matches
  * - Before expected finish: Don't poll
  * - After expected finish: Poll at +0, +5, +10, +20 min intervals
  * - After 3 hours: Poll every 10 min (fallback for delayed matches)
  * @returns Number of milliseconds until next poll, or null if no polling needed
  */
 function calculateNextPollDelay(): number | null {
+  // First priority: Check if we have finished matches awaiting resolution
+  const batchingDecision = calculateSmartBatchingDelay();
+  const finishedMatches = db.getFinishedUnresolvedMatches();
+
+  // If we have finished matches and batching says resolve now (0 delay), poll immediately
+  if (finishedMatches.length > 0 && batchingDecision.delayMs === 0) {
+    console.log(
+      `🎯 Finished matches ready for resolution (${batchingDecision.reason}) - polling now`
+    );
+    return 0;
+  }
+
+  // If batching says to wait, use that delay
+  if (
+    finishedMatches.length > 0 &&
+    batchingDecision.delayMs > 0 &&
+    batchingDecision.reason === "waiting_for_nearby_finish"
+  ) {
+    return batchingDecision.delayMs;
+  }
+
+  // Second priority: Check in-progress matches for expected finishes
   const unresolvedMatches = db.getMatchesAwaitingResults();
 
   if (unresolvedMatches.length === 0) {
@@ -667,6 +776,51 @@ async function pollMatchResults(): Promise<void> {
           console.log(
             `✅ Successfully batch resolved ${onChainMatches.length} matches (tx: ${result.txHash})`
           );
+
+          // V3: Check for result conflicts and batch summary
+          try {
+            const [batchSummary, resultConflicts] = await Promise.all([
+              subgraphService.getBatchResolutionSummaryByTx(result.txHash),
+              subgraphService.getResultConflicts(result.txHash),
+            ]);
+
+            // Log batch summary if available
+            if (batchSummary) {
+              console.log(
+                `📊 Batch summary: ${batchSummary.resolvedCount} resolved, ${batchSummary.skippedCount} skipped`
+              );
+            }
+
+            // Check for result conflicts
+            if (resultConflicts.length > 0) {
+              console.error(
+                `🚨 RESULT CONFLICT DETECTED in ${resultConflicts.length} match(es)!`
+              );
+
+              for (const conflict of resultConflicts) {
+                if (conflict.match) {
+                  console.error(
+                    `  ⚠️ Match ${conflict.match.matchId}: ${conflict.match.homeTeam} vs ${conflict.match.awayTeam}`,
+                    `\n    On-chain result: ${conflict.match.result}`,
+                    `\n    Attempted result: Different (see tx ${conflict.transactionHash})`
+                  );
+                } else {
+                  console.error(
+                    `  ⚠️ Match ID unknown (conflict in tx ${conflict.transactionHash})`
+                  );
+                }
+              }
+
+              // TODO: Send alert to admin via Discord/Telegram
+              // This indicates on-chain data differs from Football API
+            }
+          } catch (error) {
+            console.warn(
+              `⚠️ Failed to fetch V3 batch monitoring data:`,
+              error
+            );
+            // Don't fail the entire resolution if monitoring fails
+          }
 
           // Log each resolved match and post results
           for (const { dbMatch, apiMatch } of onChainMatches) {

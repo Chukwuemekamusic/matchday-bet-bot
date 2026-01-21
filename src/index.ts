@@ -465,9 +465,9 @@ Waiting for confirmation on Base...
                             topics: log.topics,
                           });
 
-                          if (decoded.eventName === "WinningsClaimed") {
-                            winnings = decoded.args.amount as bigint;
-                            profit = decoded.args.profit as bigint;
+                          if (decoded.eventName === "WinningsClaimed" && decoded.args) {
+                            winnings = (decoded.args as any).amount as bigint;
+                            profit = (decoded.args as any).profit as bigint;
                             break;
                           }
                         } catch (e) {

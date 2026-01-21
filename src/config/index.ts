@@ -72,6 +72,18 @@ export const config = {
     pendingBetTimeout: 5 * 60 * 1000, // 5 minutes in ms
   },
 
+  // Smart batching for match resolution (gas optimization)
+  smartBatching: {
+    // Enable smart batching logic (waits to batch nearby matches)
+    enabled: optionalEnv("SMART_BATCHING_ENABLED", "true") === "true",
+    // Maximum time to wait for batching before forcing resolution (seconds)
+    maxWaitTime: parseInt(optionalEnv("MAX_BATCHING_WAIT", "900")), // 15 minutes
+    // Minimum matches needed to consider it a "good batch" (resolve immediately)
+    minBatchSize: parseInt(optionalEnv("MIN_BATCH_SIZE", "3")),
+    // Window to look ahead for upcoming match finishes (seconds)
+    nearbyMatchWindow: parseInt(optionalEnv("NEARBY_MATCH_WINDOW", "600")), // 10 minutes
+  },
+
   // Match cancellation settings
   cancellation: {
     // Delay before auto-cancelling same-day postponed matches (in seconds)
