@@ -129,6 +129,7 @@ Checking on-chain status...`,
 **Match ID:** ${match.on_chain_match_id}
 
 The match was not found on the blockchain. It may have been deleted or never created.`,
+            opts,
           );
           return;
         }
