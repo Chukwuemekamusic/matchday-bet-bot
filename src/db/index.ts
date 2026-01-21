@@ -639,6 +639,16 @@ class DatabaseService {
   }
 
   /**
+   * Get match ID by match code
+   */
+  getMatchIdByMatchCode(matchCode: string): number | undefined {
+    const stmt = this.db.prepare(`
+      SELECT id FROM matches WHERE match_code = ?
+    `);
+    return (stmt.get(matchCode) as { id: number })?.id;
+  }
+
+  /**
    * Get next daily_id for a specific date
    * Ensures sequential assignment regardless of fetch order
    */
@@ -865,11 +875,7 @@ class DatabaseService {
    * @param timeSlot - Time slot identifier ('morning' or 'noon')
    * @param messageId - Optional Towns message ID
    */
-  recordPosted(
-    matchDate: string,
-    timeSlot: string,
-    messageId?: string
-  ): void {
+  recordPosted(matchDate: string, timeSlot: string, messageId?: string): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO posted_messages (match_date, time_slot, towns_message_id)
       VALUES (?, ?, ?)

@@ -41,6 +41,7 @@ export {
   createMigrateHandler,
   createBotInfoHandler,
   createResolveHandler,
+  createMatchIdHandler,
 } from "./admin";
 
 // Utility

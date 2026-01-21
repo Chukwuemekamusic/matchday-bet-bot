@@ -5,3 +5,4 @@ export { createDBCheckHandler } from "./dbcheck";
 export { createMigrateHandler } from "./migrate";
 export { createBotInfoHandler } from "./botinfo";
 export { createResolveHandler } from "./resolve";
+export { createMatchIdHandler } from "./matchid";

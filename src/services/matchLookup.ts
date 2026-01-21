@@ -33,7 +33,7 @@ export class MatchLookupService {
    */
   findMatch(
     input: string,
-    options: MatchLookupOptions = {}
+    options: MatchLookupOptions = {},
   ): MatchLookupResult {
     const { commandName = "", suggestionCommand = "/matches" } = options;
 
@@ -50,7 +50,7 @@ export class MatchLookupService {
    */
   private findByMatchCode(
     matchCode: string,
-    suggestionCommand: string
+    suggestionCommand: string,
   ): MatchLookupResult {
     const match = db.getMatchByMatchCode(matchCode);
 
@@ -73,7 +73,7 @@ export class MatchLookupService {
   private findByDailyId(
     input: string,
     commandName: string,
-    suggestionCommand: string
+    suggestionCommand: string,
   ): MatchLookupResult {
     const matchNum = parseInt(input);
 
@@ -138,4 +138,3 @@ ${commandHint}Use \`${suggestionCommand}\` to see available matches.`,
 
 // Export singleton instance
 export const matchLookup = new MatchLookupService();
-

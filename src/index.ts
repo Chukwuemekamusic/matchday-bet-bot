@@ -54,6 +54,7 @@ import {
   handleClaimConfirmButton,
   handleClaimAllConfirmButton,
   handleRefundConfirmButton,
+  createMatchIdHandler,
   type HandlerContext,
 } from "./handlers";
 
@@ -888,6 +889,9 @@ bot.onMessage(
 /*//////////////////////////////////////////////////////////////
                          DEBUG SLASH COMMANDS
     //////////////////////////////////////////////////////////////*/
+
+// /matchid - Admin command to get the database match ID and on-chain match ID from the match code
+bot.onSlashCommand("matchid", createMatchIdHandler(handlerContext));
 
 // /contractinfo - Show contract version and config
 bot.onSlashCommand("contractinfo", createContractInfoHandler(handlerContext));

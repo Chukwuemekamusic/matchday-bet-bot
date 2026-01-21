@@ -111,10 +111,11 @@ const commands = [
     name: "contractinfo",
     description: "🔧 Show contract version and configuration",
   },
-  // {
-  //   name: "botinfo",
-  //   description: "🔧 Show bot wallet addresses and balance",
-  // },
+  {
+    name: "matchid",
+    description:
+      "🔧 Get the database match ID and on-chain match ID from the match code",
+  },
   {
     name: "userHasBet",
     description: "🔧 Test if user has bet on a match",
