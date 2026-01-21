@@ -37,6 +37,7 @@ import {
   createStatsHandler,
   createFetchHandler,
   createPostHandler,
+  createClearPostedHandler,
   handleLeaderboard,
   createDBCheckHandler,
   createMigrateHandler,
@@ -145,6 +146,9 @@ bot.onSlashCommand("fetch", createFetchHandler(handlerContext));
 
 // /post - Admin command to manually post announcements
 bot.onSlashCommand("post", createPostHandler(handlerContext));
+
+// /clearposted - Admin command to clear posted announcement records
+bot.onSlashCommand("clearposted", createClearPostedHandler(handlerContext));
 
 // /dbcheck - Admin command to check database connectivity
 bot.onSlashCommand("dbcheck", createDBCheckHandler(handlerContext));
