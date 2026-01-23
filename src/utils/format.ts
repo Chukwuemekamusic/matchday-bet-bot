@@ -174,8 +174,15 @@ export function isBettingOpen(kickoffTime: number): boolean {
 /**
  * Format match display based on status (for /matches command)
  * Uses match.daily_id for stable display numbers throughout the day
+ * @param match - The match to display
+ * @param poolAmount - Optional on-chain pool amount (from subgraph/contract). If not provided, uses DB value.
+ * @param displayId - Optional display ID (deprecated, use match.daily_id instead)
  */
-export function formatMatchDisplay(match: DBMatch, displayId?: number): string {
+export function formatMatchDisplay(
+  match: DBMatch,
+  poolAmount?: bigint,
+  displayId?: number
+): string {
   const {
     status,
     home_score,
@@ -188,7 +195,15 @@ export function formatMatchDisplay(match: DBMatch, displayId?: number): string {
     daily_id,
     match_code,
   } = match;
-  const pool = match.on_chain_match_id ? formatEth(total_pool) : "0";
+
+  // Use provided pool amount if available, otherwise fall back to DB value
+  let pool = "0";
+  if (poolAmount !== undefined) {
+    pool = formatEth(poolAmount.toString());
+  } else if (match.on_chain_match_id) {
+    pool = formatEth(total_pool);
+  }
+
   // Use daily_id if available, otherwise fall back to displayId parameter
   const matchNumber = daily_id ?? displayId ?? "?";
 

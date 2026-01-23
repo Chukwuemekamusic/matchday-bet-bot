@@ -404,3 +404,17 @@ export interface GetBatchResolutionSummaryResponse {
 export interface GetBatchResolutionSummariesResponse {
   batchResolutionSummaries: SubgraphBatchResolutionSummary[];
 }
+
+// Match pool data from subgraph
+export interface SubgraphMatchPool {
+  id: string; // Match entity ID
+  matchId: string; // On-chain match ID as string
+  totalPool: string; // BigInt as string
+  homePool: string;
+  drawPool: string;
+  awayPool: string;
+}
+
+export interface GetMatchesWithPoolsResponse {
+  matches: SubgraphMatchPool[];
+}

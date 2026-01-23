@@ -8,6 +8,7 @@ import { db } from "../../db";
 import { formatMatchDisplay } from "../../utils/format";
 import { getCompetitionEmoji, LEAGUE_CODE_MAP } from "../../utils/competition";
 import { getSmartThreadOpts } from "../../utils/threadRouter";
+import { subgraphService } from "../../services/subgraph";
 import type { DBMatch } from "../../types";
 
 export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
@@ -45,6 +46,21 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
     return;
   }
 
+  // Fetch pool amounts from subgraph (with contract fallback)
+  const onChainMatchIds = matches
+    .filter((m) => m.on_chain_match_id !== null)
+    .map((m) => m.on_chain_match_id!);
+
+  let poolsMap = new Map<number, bigint>();
+  if (onChainMatchIds.length > 0) {
+    try {
+      poolsMap = await subgraphService.getMatchesPools(onChainMatchIds);
+    } catch (error) {
+      console.warn("⚠️ Failed to fetch pool data:", error);
+      // Continue without pool data
+    }
+  }
+
   // Group matches by competition
   const grouped = new Map<string, DBMatch[]>();
   for (const match of matches) {
@@ -71,7 +87,10 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
     message += `${emoji} **${competition}**\n\n`;
 
     for (const match of compMatches) {
-      message += formatMatchDisplay(match);
+      const poolAmount = match.on_chain_match_id
+        ? poolsMap.get(match.on_chain_match_id)
+        : undefined;
+      message += formatMatchDisplay(match, poolAmount);
     }
   }
 

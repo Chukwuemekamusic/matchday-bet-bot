@@ -14,6 +14,7 @@ import { Outcome } from "../types";
 import { FootballAPIService } from "./footballApi";
 import { formatEth, formatMatchDisplay } from "../utils/format";
 import { getCompetitionEmoji } from "../utils/competition";
+import { subgraphService } from "./subgraph";
 
 /**
  * Information about a cancelled match
@@ -100,6 +101,24 @@ export class AnnouncementService {
       return;
     }
 
+    // Fetch pool amounts from subgraph (with contract fallback)
+    const onChainMatchIds = matches
+      .filter((m: DBMatch) => m.on_chain_match_id !== null)
+      .map((m: DBMatch) => m.on_chain_match_id!);
+
+    let poolsMap = new Map<number, bigint>();
+    if (onChainMatchIds.length > 0) {
+      try {
+        poolsMap = await subgraphService.getMatchesPools(
+          onChainMatchIds,
+          this.contractService
+        );
+      } catch (error) {
+        console.warn("⚠️ Failed to fetch pool data for announcements:", error);
+        // Continue without pool data
+      }
+    }
+
     // Group matches by competition
     const grouped = new Map<string, DBMatch[]>();
     for (const match of matches) {
@@ -126,7 +145,10 @@ export class AnnouncementService {
       message += `${emoji} **${competition}**\n\n`;
 
       for (const match of compMatches) {
-        message += formatMatchDisplay(match);
+        const poolAmount = match.on_chain_match_id
+          ? poolsMap.get(match.on_chain_match_id)
+          : undefined;
+        message += formatMatchDisplay(match, poolAmount);
       }
     }
 

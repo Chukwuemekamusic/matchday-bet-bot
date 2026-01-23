@@ -28,6 +28,8 @@ import type {
   SubgraphMatch,
   GetMatchResponse,
   SkipReason,
+  GetMatchesWithPoolsResponse,
+  SubgraphMatchPool,
 } from "../types/index.js";
 
 // GraphQL client
@@ -244,6 +246,19 @@ const GET_MATCH = gql`
       drawBets
       awayBets
       createdAt
+    }
+  }
+`;
+
+const GET_MATCHES_WITH_POOLS = gql`
+  query GetMatchesWithPools($matchIds: [String!]!) {
+    matches(where: { id_in: $matchIds }) {
+      id
+      matchId
+      totalPool
+      homePool
+      drawPool
+      awayPool
     }
   }
 `;
@@ -661,6 +676,76 @@ export const subgraphService = {
     } catch (error) {
       console.warn(`⚠️ Failed to fetch match ${matchId} from subgraph:`, error);
       return null;
+    }
+  },
+
+  /**
+   * Get pool amounts for multiple matches
+   * Returns a map of matchId -> totalPool for easy lookup
+   * Falls back to contract calls if subgraph fails
+   */
+  async getMatchesPools(
+    onChainMatchIds: number[],
+    contractService?: any
+  ): Promise<Map<number, bigint>> {
+    const poolsMap = new Map<number, bigint>();
+
+    if (onChainMatchIds.length === 0) {
+      return poolsMap;
+    }
+
+    const queryFn = async (): Promise<Map<number, bigint>> => {
+      // Subgraph uses entity IDs (string match IDs)
+      const matchIdStrings = onChainMatchIds.map(id => id.toString());
+
+      const response = await client.request<GetMatchesWithPoolsResponse>(
+        GET_MATCHES_WITH_POOLS,
+        { matchIds: matchIdStrings }
+      );
+
+      const result = new Map<number, bigint>();
+      for (const match of response.matches) {
+        const matchId = parseInt(match.matchId);
+        const totalPool = BigInt(match.totalPool);
+        result.set(matchId, totalPool);
+      }
+
+      console.log(`✅ Fetched pool data for ${result.size}/${onChainMatchIds.length} matches from subgraph`);
+      return result;
+    };
+
+    const fallbackFn = async (): Promise<Map<number, bigint>> => {
+      console.log(`⚠️ Subgraph unavailable, falling back to contract calls for ${onChainMatchIds.length} matches`);
+
+      if (!contractService || !contractService.isContractAvailable()) {
+        console.warn("⚠️ Contract service not available, returning empty pools");
+        return new Map<number, bigint>();
+      }
+
+      const result = new Map<number, bigint>();
+
+      // Fetch pools from contract for each match
+      for (const matchId of onChainMatchIds) {
+        try {
+          const pools = await contractService.getPools(matchId);
+          if (pools) {
+            result.set(matchId, pools.total);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to fetch pools for match ${matchId} from contract:`, error);
+        }
+      }
+
+      console.log(`✅ Fetched pool data for ${result.size}/${onChainMatchIds.length} matches from contract`);
+      return result;
+    };
+
+    try {
+      const { data } = await queryWithFallback(queryFn, fallbackFn);
+      return data;
+    } catch (error) {
+      console.error("❌ Failed to fetch match pools from both subgraph and contract:", error);
+      return new Map<number, bigint>();
     }
   },
 };
