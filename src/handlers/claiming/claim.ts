@@ -189,7 +189,7 @@ Better luck next time!`,
         return;
       }
 
-      // claimType: 0 = none, 1 = winnings (includes "no winners" refund), 2 = refund (cancelled)
+      // claimType: 0 = none, 1 = winnings (includes "no winners" refund), 2 = refund (cancelled) ==
       if (claimStatus.claimType !== 1) {
         await handler.sendMessage(
           channelId,
