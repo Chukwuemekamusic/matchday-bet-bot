@@ -6,13 +6,20 @@ import type {
 import { matchLookup } from "../../services/matchLookup";
 import { db } from "../../db";
 import { getSmartThreadOpts } from "../../utils/threadRouter";
-import { formatOutcome, formatEth, truncateAddress } from "../../utils/format";
+import {
+  formatOutcome,
+  formatEth,
+  truncateAddress,
+  sanitizeArgs,
+} from "../../utils/format";
 
 export const createWinnersHandler =
   (context: HandlerContext): CommandHandler<CommandEventWithArgs> =>
   async (handler, { channelId, args, threadId }) => {
     const opts = getSmartThreadOpts(threadId);
-    if (args.length < 1) {
+    const cleanArgs = sanitizeArgs(args);
+
+    if (cleanArgs.length < 1) {
       await handler.sendMessage(
         channelId,
         `❌ **Invalid Usage**
@@ -29,7 +36,7 @@ Use \`/matches\` to see today's match numbers.`,
       return;
     }
 
-    const input = args[0];
+    const input = cleanArgs[0];
 
     try {
       // Use match lookup service

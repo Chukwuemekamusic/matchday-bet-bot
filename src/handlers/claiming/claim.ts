@@ -10,7 +10,12 @@ import type {
   HandlerContext,
 } from "../types";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
-import { formatEth, formatOutcome, truncateAddress } from "../../utils/format";
+import {
+  formatEth,
+  formatOutcome,
+  truncateAddress,
+  sanitizeArgs,
+} from "../../utils/format";
 import type { DBMatch } from "../../types";
 import { db } from "../../db";
 import { matchLookup } from "../../services/matchLookup";
@@ -37,7 +42,8 @@ export const createClaimHandler = (
       }
 
       // Validate args
-      if (args.length < 1) {
+      const cleanArgs = sanitizeArgs(args);
+      if (cleanArgs.length < 1) {
         await handler.sendMessage(
           channelId,
           `❌ Usage: \`/claim <match #>\`
@@ -50,7 +56,7 @@ Use \`/claimable\` to see all your unclaimed winnings.`,
         return;
       }
 
-      const input = args[0];
+      const input = cleanArgs[0];
 
       // Use match lookup service
       const lookupResult = matchLookup.findMatch(input, {

@@ -23,6 +23,7 @@ import {
   isBettingOpen,
   formatTime,
   timeUntilKickoff,
+  sanitizeArgs,
 } from "../../utils/format";
 import { getCompetitionEmoji } from "../../utils/competition";
 import { Outcome } from "../../types";
@@ -58,8 +59,13 @@ export const createBetHandler = (
 
       console.log("═══════════════════════════════════════════════════════");
 
-      if (args.length < 3) {
-        console.log("❌ Invalid args length:", args.length);
+      // Sanitize args to remove empty strings caused by extra spaces
+      const cleanArgs = sanitizeArgs(args);
+      console.log("📝 Raw args:", args);
+      console.log("📝 Sanitized args:", cleanArgs);
+
+      if (cleanArgs.length < 3) {
+        console.log("❌ Invalid args length:", cleanArgs.length);
         await handler.sendMessage(
           channelId,
           `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
@@ -69,9 +75,9 @@ Example: \`/bet 1 home 0.01\``,
         return;
       }
 
-      const matchNum = parseInt(args[0]);
-      const predictionStr = args[1];
-      const amountStr = args[2];
+      const matchNum = parseInt(cleanArgs[0]);
+      const predictionStr = cleanArgs[1];
+      const amountStr = cleanArgs[2];
 
       console.log("📝 Parsed args:", { matchNum, predictionStr, amountStr });
 

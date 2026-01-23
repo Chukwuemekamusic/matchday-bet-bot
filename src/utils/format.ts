@@ -172,6 +172,18 @@ export function isBettingOpen(kickoffTime: number): boolean {
 }
 
 /**
+ * Sanitize slash command arguments by removing empty strings caused by extra spaces
+ * @param args - Raw command arguments from Towns Protocol
+ * @returns Filtered array with empty/whitespace-only strings removed
+ * @example
+ * sanitizeArgs(['4', '', 'home', '0.0001']) // => ['4', 'home', '0.0001']
+ * sanitizeArgs(['  ', 'draw', '', '0.5']) // => ['draw', '0.5']
+ */
+export function sanitizeArgs(args: string[]): string[] {
+  return args.filter((arg) => arg.trim() !== "");
+}
+
+/**
  * Format match display based on status (for /matches command)
  * Uses match.daily_id for stable display numbers throughout the day
  * @param match - The match to display

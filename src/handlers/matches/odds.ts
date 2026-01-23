@@ -16,6 +16,7 @@ import {
   formatOdds,
   timeUntilKickoff,
   isBettingOpen,
+  sanitizeArgs,
 } from "../../utils/format";
 
 export const createOddsHandler = (
@@ -23,7 +24,9 @@ export const createOddsHandler = (
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, threadId }) => {
     const opts = getSmartThreadOpts(threadId);
-    if (args.length < 1) {
+    const cleanArgs = sanitizeArgs(args);
+
+    if (cleanArgs.length < 1) {
       await handler.sendMessage(
         channelId,
         "❌ Usage: `/odds <match #>`\nExample: `/odds 1`",
@@ -32,7 +35,7 @@ export const createOddsHandler = (
       return;
     }
 
-    const matchNum = parseInt(args[0]);
+    const matchNum = parseInt(cleanArgs[0]);
     if (isNaN(matchNum) || matchNum < 1) {
       await handler.sendMessage(
         channelId,
