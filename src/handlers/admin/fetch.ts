@@ -7,9 +7,10 @@ import { db } from "../../db";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { footballApi, FootballAPIService } from "../../services/footballApi";
 import { isUserAdmin } from "../../utils/wallet";
+import { sanitizeArgs } from "../../utils/format";
 
 export const createFetchHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, eventId, threadId, userId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -19,7 +20,7 @@ export const createFetchHandler = (
       if (!(await isUserAdmin(context.bot, userId as `0x${string}`))) {
         await handler.sendMessage(
           channelId,
-          "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+          "❌ **Access Denied**\n\nThis command is only available to the bot administrator.",
         );
         return;
       }
@@ -28,13 +29,14 @@ export const createFetchHandler = (
       let targetDate: string;
       let matches: any[];
 
-      if (args.length > 0) {
-        targetDate = args[0];
+      const cleanArgs = sanitizeArgs(args);
+      if (cleanArgs.length > 0) {
+        targetDate = cleanArgs[0];
         // Validate date format (basic check)
         if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
           await handler.sendMessage(
             channelId,
-            "❌ Invalid date format. Use YYYY-MM-DD (e.g., 2026-01-17)"
+            "❌ Invalid date format. Use YYYY-MM-DD (e.g., 2026-01-17)",
           );
           return;
         }
@@ -86,12 +88,12 @@ export const createFetchHandler = (
           matches.length
         } matches for ${targetDate} (${newCount} new${
           skippedCount > 0 ? `, ${skippedCount} skipped` : ""
-        })`
+        })`,
       );
     } catch (error) {
       await handler.sendMessage(
         channelId,
-        "❌ Failed to fetch matches. Check API configuration."
+        "❌ Failed to fetch matches. Check API configuration.",
       );
     }
   };

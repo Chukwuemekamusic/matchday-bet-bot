@@ -10,13 +10,18 @@ import type {
   HandlerContext,
 } from "../types";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
-import { formatEth, formatOutcome, truncateAddress } from "../../utils/format";
+import {
+  formatEth,
+  formatOutcome,
+  truncateAddress,
+  sanitizeArgs,
+} from "../../utils/format";
 import { matchLookup } from "../../services/matchLookup";
 import { isAddress } from "viem";
 import { getLinkedWallets } from "../../utils/wallet";
 
 export const createUserHasBetHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, userId, eventId, threadId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -27,13 +32,14 @@ export const createUserHasBetHandler = (
         await handler.sendMessage(
           channelId,
           "❌ Smart contract is not yet deployed. Please contact the admin.",
-          opts
+          opts,
         );
         return;
       }
 
       // Validate args
-      if (args.length < 1) {
+      const cleanArgs = sanitizeArgs(args);
+      if (cleanArgs.length < 1) {
         await handler.sendMessage(
           channelId,
           `❌ Usage: \`/userHasBet <match #> [user_address]\`
@@ -44,7 +50,7 @@ export const createUserHasBetHandler = (
 • \`/userHasBet 1 0x123...\` - Check if specific user has bet on match #1
 
 Use \`/matches\` to see available matches.`,
-          opts
+          opts,
         );
         return;
       }
@@ -75,7 +81,7 @@ Use \`/matches\` to see available matches.`,
 **${match.home_team} vs ${match.away_team}**
 
 No bets have been placed on this match.`,
-          opts
+          opts,
         );
         return;
       }
@@ -90,7 +96,7 @@ No bets have been placed on this match.`,
           await handler.sendMessage(
             channelId,
             `❌ Invalid address format: \`${targetUserInput}\`\n\nPlease provide a valid Ethereum address.`,
-            opts
+            opts,
           );
           return;
         }
@@ -105,7 +111,7 @@ No bets have been placed on this match.`,
           await handler.sendMessage(
             channelId,
             "❌ Unable to determine your wallet address.",
-            opts
+            opts,
           );
           return;
         }
@@ -115,7 +121,7 @@ No bets have been placed on this match.`,
       // Check if user has bet on this match (on-chain)
       const hasBet = await context.contractService.hasUserBet(
         match.on_chain_match_id,
-        targetUserAddress
+        targetUserAddress,
       );
 
       const matchCode = match.match_code || `#${match.daily_id || match.id}`;
@@ -139,7 +145,7 @@ No bets have been placed on this match.`,
 ${
   isCommandSender ? "You haven't" : "This user hasn't"
 } placed a bet on this match.`,
-          opts
+          opts,
         );
         return;
       }
@@ -147,7 +153,7 @@ ${
       // Fetch bet details
       const userBet = await context.contractService.getUserBet(
         match.on_chain_match_id,
-        targetUserAddress
+        targetUserAddress,
       );
 
       if (!userBet) {
@@ -159,7 +165,7 @@ ${
 The contract indicates ${userLabel.toLowerCase()} ${
             isCommandSender ? "have" : "has"
           } a bet, but couldn't fetch bet details.`,
-          opts
+          opts,
         );
         return;
       }
@@ -181,7 +187,7 @@ The contract indicates ${userLabel.toLowerCase()} ${
 • Pick: ${prediction}
 • Stake: ${amount} ETH
 • Status: ${claimedStatus}`,
-        opts
+        opts,
       );
     } catch (error) {
       console.error("userHasBet error:", error);
@@ -190,7 +196,7 @@ The contract indicates ${userLabel.toLowerCase()} ${
         `❌ Failed to check bet: ${
           error instanceof Error ? error.message : "Unknown error"
         }`,
-        opts
+        opts,
       );
     }
   };

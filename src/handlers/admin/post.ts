@@ -7,6 +7,7 @@ import { db } from "../../db";
 import { isUserAdmin } from "../../utils/wallet";
 import { AnnouncementService } from "../../services/announcements";
 import { getThreadMessageOpts } from "../../utils/threadRouter";
+import { sanitizeArgs } from "../../utils/format";
 
 export const createPostHandler = (
   context: HandlerContext,
@@ -44,7 +45,9 @@ export const createPostHandler = (
       );
 
       // Parse time slot argument (default to 'noon')
-      const timeSlot = args.length > 0 ? args[0].toLowerCase() : "noon";
+      const cleanArgs = sanitizeArgs(args);
+      const timeSlot =
+        cleanArgs.length > 0 ? cleanArgs[0].toLowerCase() : "noon";
 
       // Validate time slot
       if (timeSlot !== "morning" && timeSlot !== "noon") {

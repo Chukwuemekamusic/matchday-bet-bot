@@ -10,7 +10,7 @@ import { formatEth, truncateAddress } from "../../utils/format";
 import { getLinkedWallets } from "../../utils/wallet";
 
 export const createMigrateHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, eventId, threadId, userId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -20,7 +20,8 @@ export const createMigrateHandler = (
       if (!(await isUserAdmin(context.bot, userId as `0x${string}`))) {
         await handler.sendMessage(
           channelId,
-          "❌ **Access Denied**\n\nThis command is only available to the bot administrator."
+          "❌ **Access Denied**\n\nThis command is only available to the bot administrator.",
+          opts,
         );
         return;
       }
@@ -28,14 +29,16 @@ export const createMigrateHandler = (
       if (!context.contractService.isContractAvailable()) {
         await handler.sendMessage(
           channelId,
-          "❌ Contract not available. Cannot migrate bets."
+          "❌ Contract not available. Cannot migrate bets.",
+          opts,
         );
         return;
       }
 
       await handler.sendMessage(
         channelId,
-        "🔄 Starting bet migration from blockchain to database...\n\nThis may take a moment..."
+        "🔄 Starting bet migration from blockchain to database...\n\nThis may take a moment...",
+        opts,
       );
 
       console.log(`[/migrate] Starting migration for user ${userId}`);
@@ -43,16 +46,16 @@ export const createMigrateHandler = (
       // Get all user's linked wallets
       const linkedWallets = await getLinkedWallets(
         context.bot,
-        userId as `0x${string}`
+        userId as `0x${string}`,
       );
       console.log(
-        `[/migrate] Found ${linkedWallets.length} linked wallet(s) for ${userId}`
+        `[/migrate] Found ${linkedWallets.length} linked wallet(s) for ${userId}`,
       );
 
       if (linkedWallets.length === 0) {
         await handler.sendMessage(
           channelId,
-          "❌ No linked wallets found for your account."
+          "❌ No linked wallets found for your account.",
         );
         return;
       }
@@ -61,7 +64,7 @@ export const createMigrateHandler = (
       const onChainMatches = db.getAllOnChainMatches();
 
       console.log(
-        `[/migrate] Found ${onChainMatches.length} matches with on-chain IDs`
+        `[/migrate] Found ${onChainMatches.length} matches with on-chain IDs`,
       );
 
       let migratedCount = 0;
@@ -77,7 +80,7 @@ export const createMigrateHandler = (
         const existingBet = db.getUserBetOnMatch(userId, match.id);
         if (existingBet) {
           console.log(
-            `[/migrate] Skipping match ${match.id} - already in DB for ${userId}`
+            `[/migrate] Skipping match ${match.id} - already in DB for ${userId}`,
           );
           skippedCount++;
           continue;
@@ -90,7 +93,7 @@ export const createMigrateHandler = (
           try {
             const bet = await context.contractService.getUserBet(
               match.on_chain_match_id,
-              wallet
+              wallet,
             );
 
             if (bet && bet.amount > 0n) {
@@ -99,14 +102,14 @@ export const createMigrateHandler = (
                 `[/migrate] Found bet on match ${
                   match.id
                 } from wallet ${truncateAddress(wallet)}: ${formatEth(
-                  bet.amount
-                )} ETH`
+                  bet.amount,
+                )} ETH`,
               );
             }
           } catch (error) {
             console.error(
               `[/migrate] Error checking wallet ${wallet} for match ${match.on_chain_match_id}:`,
-              error
+              error,
             );
           }
         }
@@ -126,18 +129,18 @@ export const createMigrateHandler = (
               match.on_chain_match_id,
               bet.prediction,
               bet.amount.toString(),
-              "0x0" // No tx hash available for historical bets
+              "0x0", // No tx hash available for historical bets
             );
             migratedCount++;
             console.log(
               `[/migrate] ✅ Migrated bet for match ${
                 match.id
-              } from wallet ${truncateAddress(wallet)}`
+              } from wallet ${truncateAddress(wallet)}`,
             );
           } catch (error) {
             console.error(
               `[/migrate] Failed to insert bet for match ${match.id}:`,
-              error
+              error,
             );
             skippedCount++;
           }
@@ -145,15 +148,15 @@ export const createMigrateHandler = (
           // Multiple bets found (duplicate situation!)
           duplicateCount++;
           duplicateMatches.push(
-            `${match.home_team} vs ${match.away_team} (${foundBets.length} bets)`
+            `${match.home_team} vs ${match.away_team} (${foundBets.length} bets)`,
           );
           console.warn(
-            `[/migrate] ⚠️ Found ${foundBets.length} bets for match ${match.id} - keeping largest`
+            `[/migrate] ⚠️ Found ${foundBets.length} bets for match ${match.id} - keeping largest`,
           );
 
           // Keep the bet with the largest amount
           const largestBet = foundBets.reduce((prev, current) =>
-            current.bet.amount > prev.bet.amount ? current : prev
+            current.bet.amount > prev.bet.amount ? current : prev,
           );
 
           try {
@@ -164,18 +167,18 @@ export const createMigrateHandler = (
               match.on_chain_match_id,
               largestBet.bet.prediction,
               largestBet.bet.amount.toString(),
-              "0x0"
+              "0x0",
             );
             migratedCount++;
             console.log(
               `[/migrate] ✅ Migrated largest bet (${formatEth(
-                largestBet.bet.amount
-              )} ETH) from ${truncateAddress(largestBet.wallet)}`
+                largestBet.bet.amount,
+              )} ETH) from ${truncateAddress(largestBet.wallet)}`,
             );
           } catch (error) {
             console.error(
               `[/migrate] Failed to insert largest bet for match ${match.id}:`,
-              error
+              error,
             );
             skippedCount++;
           }
@@ -203,7 +206,7 @@ export const createMigrateHandler = (
 
       await handler.sendMessage(channelId, resultMessage);
       console.log(
-        `[/migrate] Migration completed for ${userId}: ${migratedCount} migrated, ${skippedCount} skipped, ${duplicateCount} duplicates handled`
+        `[/migrate] Migration completed for ${userId}: ${migratedCount} migrated, ${skippedCount} skipped, ${duplicateCount} duplicates handled`,
       );
     } catch (error) {
       console.error(`[/migrate] Migration failed for ${userId}:`, error);
@@ -211,7 +214,7 @@ export const createMigrateHandler = (
         channelId,
         `❌ **Migration Failed**\n\nAn error occurred during migration. Please try again or contact support.\n\nError: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
       );
     }
   };

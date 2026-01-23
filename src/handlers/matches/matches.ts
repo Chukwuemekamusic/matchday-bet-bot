@@ -5,7 +5,7 @@
 
 import type { CommandHandler, CommandEventWithArgs } from "../types";
 import { db } from "../../db";
-import { formatMatchDisplay } from "../../utils/format";
+import { formatMatchDisplay, sanitizeArgs } from "../../utils/format";
 import { getCompetitionEmoji, LEAGUE_CODE_MAP } from "../../utils/competition";
 import { getSmartThreadOpts } from "../../utils/threadRouter";
 import { subgraphService } from "../../services/subgraph";
@@ -13,10 +13,11 @@ import type { DBMatch } from "../../types";
 
 export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
   handler,
-  { channelId, args, threadId }
+  { channelId, args, threadId },
 ) => {
   const opts = getSmartThreadOpts(threadId);
-  const leagueFilter = args[0]?.toUpperCase();
+  const cleanArgs = sanitizeArgs(args);
+  const leagueFilter = cleanArgs[0]?.toUpperCase();
 
   let matches = db.getTodaysMatches();
 
@@ -24,7 +25,7 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
     await handler.sendMessage(
       channelId,
       "📅 No matches scheduled for today. Check back tomorrow!",
-      opts
+      opts,
     );
     return;
   }
@@ -41,7 +42,7 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
     await handler.sendMessage(
       channelId,
       `📅 No ${leagueFilter || ""} matches scheduled for today.`,
-      opts
+      opts,
     );
     return;
   }
