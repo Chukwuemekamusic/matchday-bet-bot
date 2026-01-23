@@ -20,7 +20,7 @@ import {
 } from "../../services/interactions";
 
 export const createClaimHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<CommandEventWithArgs> => {
   return async (handler, { channelId, args, userId, eventId, threadId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -31,7 +31,7 @@ export const createClaimHandler = (
         await handler.sendMessage(
           channelId,
           "❌ Smart contract is not yet deployed. Please contact the admin.",
-          opts
+          opts,
         );
         return;
       }
@@ -45,7 +45,7 @@ export const createClaimHandler = (
 Example: \`/claim 1\`
 
 Use \`/claimable\` to see all your unclaimed winnings.`,
-          opts
+          opts,
         );
         return;
       }
@@ -70,7 +70,7 @@ Use \`/claimable\` to see all your unclaimed winnings.`,
         await handler.sendMessage(
           channelId,
           `❌ This match hasn't been created on-chain yet. No bets have been placed.`,
-          opts
+          opts,
         );
         return;
       }
@@ -88,7 +88,7 @@ Use \`/claimable\` to see all your unclaimed winnings.`,
 Status: ${resolvedMatch.status}
 
 You can claim once the match is finished and resolved.`,
-          opts
+          opts,
         );
         return;
       }
@@ -104,7 +104,7 @@ You can claim once the match is finished and resolved.`,
 **${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**
 
 Use \`/claimable\` to see matches you can claim from.`,
-          opts
+          opts,
         );
         return;
       }
@@ -120,8 +120,31 @@ Use \`/claimable\` to see matches you can claim from.`,
         await handler.sendMessage(
           channelId,
           `❌ Couldn't retrieve your wallet address. Please try again or contact support.`,
-          opts
+          opts,
         );
+        return;
+      }
+
+      // Get on-chain bet to calculate winnings
+      const onChainBet = await context.contractService.getUserBet(
+        resolvedMatch.on_chain_match_id!,
+        walletAddress,
+      );
+
+      if (onChainBet && onChainBet.claimed) {
+        await handler.sendMessage(
+          channelId,
+          `✅ You've already claimed winnings for this match on-chain.
+
+**${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**
+
+Use \`/stats\` to see your total winnings.`,
+          opts,
+        );
+        if (userBet.claimed === 0) {
+          // Update DB to match on-chain state
+          db.updateBetClaimed(userId, resolvedMatch.id);
+        }
         return;
       }
 
@@ -129,10 +152,10 @@ Use \`/claimable\` to see matches you can claim from.`,
       // This handles both regular wins AND "no winners" refund cases
       const claimStatus = await context.contractService.getClaimStatus(
         resolvedMatch.on_chain_match_id!,
-        walletAddress
+        walletAddress,
       );
 
-      if (!claimStatus || !claimStatus.canClaim) {
+      if (!onChainBet?.claimed && (!claimStatus || !claimStatus.canClaim)) {
         // Check if it's because they didn't win (not a "no winners" case)
         if (userBet.prediction !== resolvedMatch.result) {
           const userPrediction = formatOutcome(userBet.prediction);
@@ -140,14 +163,14 @@ Use \`/claimable\` to see matches you can claim from.`,
 
           await handler.sendMessage(
             channelId,
-            `😔 Your bet didn't win.
+            `😔 You lost this match.
 
 **${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**
 Your Prediction: ${userPrediction}
 Result: ${actualResult}
 
 Better luck next time!`,
-            opts
+            opts,
           );
           return;
         }
@@ -161,7 +184,7 @@ Better luck next time!`,
                 (claimStatus.claimType === 0 ? "Not eligible" : "Unknown")
               : "Please contact support."
           }`,
-          opts
+          opts,
         );
         return;
       }
@@ -173,55 +196,23 @@ Better luck next time!`,
           `❌ This match requires a refund claim, not a winnings claim.
 
 Use \`/claim_refund ${resolvedMatch.match_code || resolvedMatch.id}\` instead.`,
-          opts
+          opts,
         );
         return;
       }
 
       // Check if already claimed
-      if (userBet.claimed === 1) {
-        await handler.sendMessage(
-          channelId,
-          `✅ You've already claimed winnings for this match.
-
-**${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**
-
-Use \`/stats\` to see your total winnings.`,
-          opts
-        );
-        return;
+      if (userBet.claimed === 1 && !onChainBet?.claimed) {
+        // change userBet.claimed to 0
       }
 
-      // Get on-chain bet to calculate winnings
-      const onChainBet = await context.contractService.getUserBet(
-        resolvedMatch.on_chain_match_id!,
-        walletAddress
-      );
-
-      if (!onChainBet || onChainBet.amount === 0n) {
+      if (!onChainBet) {
         await handler.sendMessage(
           channelId,
           `❌ Couldn't find your bet on-chain. Please contact support.
 
 Wallet: ${truncateAddress(walletAddress)}`,
-          opts
-        );
-        return;
-      }
-
-      // Check if already claimed on-chain
-      if (onChainBet.claimed) {
-        // Update DB to match on-chain state
-        db.updateBetClaimed(userId, resolvedMatch.id);
-
-        await handler.sendMessage(
-          channelId,
-          `✅ You've already claimed winnings for this match on-chain.
-
-**${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**
-
-Use \`/stats\` to see your total winnings.`,
-          opts
+          opts,
         );
         return;
       }
@@ -235,7 +226,7 @@ Use \`/stats\` to see your total winnings.`,
           `⚠️ Winnings calculation returned 0 ETH. This might be a pool issue. Please contact support.
 
 **${resolvedMatch.home_team} vs ${resolvedMatch.away_team}**`,
-          opts
+          opts,
         );
         return;
       }
@@ -246,7 +237,7 @@ Use \`/stats\` to see your total winnings.`,
         InteractionType.CLAIM,
         resolvedMatch.id,
         userId,
-        opts?.threadId
+        opts?.threadId,
       );
 
       const stakeAmount = BigInt(onChainBet.amount);
@@ -283,7 +274,8 @@ Ready to claim your winnings?`;
 
       // Add wallet guidance message
       const walletInfo =
-        smartAccount && walletAddress.toLowerCase() === smartAccount.toLowerCase()
+        smartAccount &&
+        walletAddress.toLowerCase() === smartAccount.toLowerCase()
           ? "your **Towns smart account**"
           : `your **linked wallet** (${truncateAddress(walletAddress)})`;
 
@@ -303,7 +295,7 @@ Ready to claim your winnings?`;
             { id: "claim-cancel", label: "Cancel", style: 2 },
           ],
         },
-        opts?.threadId
+        opts?.threadId,
       );
 
       // Store claim context in a temporary table/map
