@@ -13,13 +13,12 @@ export const handleClaimConfirmButton: ButtonHandler = async (
   context,
 ) => {
   const { channelId, userId, requestId, threadId } = event;
-  const opts = threadId ? { threadId } : undefined;
 
   console.log("🔍 [CLAIM-CONFIRM] Button clicked");
   console.log("  - requestId:", requestId);
   console.log("  - userId:", userId);
   console.log("  - channelId:", channelId);
-  console.log("  - threadId:", threadId);
+  console.log("  - threadId from event:", threadId);
 
   // Parse match ID from interaction ID (format: claim-{matchId}-{userIdPrefix}-{threadId})
   const parts = requestId.split("-");
@@ -32,13 +31,21 @@ export const handleClaimConfirmButton: ButtonHandler = async (
     await handler.sendMessage(
       channelId,
       "❌ Invalid claim request. Please try again with `/claim`.",
-      opts
     );
     return;
   }
 
   const matchId = parseInt(parts[1]);
   console.log("  - matchId:", matchId);
+
+  // Retrieve threadId from database (stored when /claim was called)
+  // This matches the bet flow pattern for reliability
+  const storedThreadId = db.getClaimThreadId(userId, matchId);
+  console.log("  - storedThreadId from database:", storedThreadId);
+
+  // Create opts with the threadId from database
+  const opts = storedThreadId ? { threadId: storedThreadId } : undefined;
+  console.log("  - opts created with threadId:", opts?.threadId);
 
   const match = db.getMatchById(matchId);
   console.log(
@@ -112,7 +119,7 @@ export const handleClaimConfirmButton: ButtonHandler = async (
   const txId = `claim-tx-${match.on_chain_match_id}-${userId.slice(
     0,
     8
-  )}-${threadId || "none"}`;
+  )}-${storedThreadId || "none"}`;
   console.log("  - txId:", txId);
 
   const contractAddress = context.contractService.getContractAddress();
@@ -136,7 +143,7 @@ export const handleClaimConfirmButton: ButtonHandler = async (
         data: calldata,
         signerWallet: userBet.wallet_address, // Pre-select wallet that placed the bet
       },
-      opts?.threadId
+      storedThreadId || undefined
     );
 
     console.log(

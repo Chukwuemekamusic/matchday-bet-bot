@@ -304,9 +304,9 @@ Ready to claim your winnings?`;
         opts?.threadId,
       );
 
-      // Store claim context in a temporary table/map
-      // For now, we'll track it by storing matchId in the interaction ID
-      // The onInteractionResponse handler will parse it
+      // Store threadId in database for later retrieval when button is clicked
+      // This ensures the transaction request and responses stay in the same thread
+      db.storeClaimThreadId(userId, resolvedMatch.id, opts?.threadId);
     } catch (error) {
       console.error("Error in /claim command:", error);
 

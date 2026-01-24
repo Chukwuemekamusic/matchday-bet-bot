@@ -145,6 +145,20 @@ class DatabaseService {
       // Column already exists, ignore error
       // SQLite will throw "duplicate column name" error if column exists
     }
+
+    // Migration 2: Add claim_thread_id column to bets table
+    // This column stores the threadId where the /claim command was executed
+    // Used to ensure claim transaction requests and responses stay in the correct thread
+    try {
+      this.db.exec(`
+        ALTER TABLE bets
+        ADD COLUMN claim_thread_id TEXT
+      `);
+      console.log("✅ Migration: Added claim_thread_id column to bets");
+    } catch (error) {
+      // Column already exists, ignore error
+      // SQLite will throw "duplicate column name" error if column exists
+    }
   }
 
   // ==================== MATCHES ====================
@@ -1018,6 +1032,41 @@ class DatabaseService {
       UPDATE bets SET claimed = 1 WHERE user_id = ? AND match_id = ?
     `);
     stmt.run(userId, matchId);
+  }
+
+  /**
+   * Store threadId for a claim interaction
+   * Used to ensure claim transaction requests stay in the correct thread
+   */
+  storeClaimThreadId(
+    userId: string,
+    matchId: number,
+    threadId: string | undefined
+  ): void {
+    const stmt = this.db.prepare(`
+      UPDATE bets
+      SET claim_thread_id = ?
+      WHERE user_id = ? AND match_id = ? AND claimed = 0
+      LIMIT 1
+    `);
+    stmt.run(threadId || null, userId, matchId);
+  }
+
+  /**
+   * Retrieve threadId for a claim interaction
+   * Returns the threadId where the /claim command was originally executed
+   */
+  getClaimThreadId(userId: string, matchId: number): string | null {
+    const stmt = this.db.prepare(`
+      SELECT claim_thread_id
+      FROM bets
+      WHERE user_id = ? AND match_id = ? AND claimed = 0
+      LIMIT 1
+    `);
+    const row = stmt.get(userId, matchId) as
+      | { claim_thread_id: string | null }
+      | undefined;
+    return row?.claim_thread_id || null;
   }
 
   /**

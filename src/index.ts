@@ -535,6 +535,9 @@ Waiting for confirmation on Base...
 Your winnings have been claimed. Check your wallet to see the payout.
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                        {
+                          ...(threadId && { threadId }),
+                        },
                       );
                     }
                   } else {
@@ -550,6 +553,9 @@ Your claim transaction was successful!
 **Match:** ${match.home_team} vs ${match.away_team}
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                      {
+                        ...(threadId && { threadId }),
+                      },
                     );
                   }
                 } else {
@@ -561,6 +567,9 @@ Your claim transaction was successful!
 Your winnings have been claimed successfully!
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                    {
+                      ...(threadId && { threadId }),
+                    },
                   );
                 }
               } else {
@@ -572,6 +581,9 @@ Your winnings have been claimed successfully!
 Your claim was successful! Check your wallet.
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                  {
+                    ...(threadId && { threadId }),
+                  },
                 );
               }
             }
@@ -632,6 +644,9 @@ Your claim was successful! Check your wallet.
 Your refund has been processed successfully!
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                    {
+                      ...(threadId && { threadId }),
+                    },
                   );
                 }
               } else {
@@ -643,6 +658,9 @@ Your refund has been processed successfully!
 Your refund was successful! Check your wallet.
 
 🔗 [Transaction](https://basescan.org/tx/${txHash})`,
+                  {
+                    ...(threadId && { threadId }),
+                  },
                 );
               }
             }
@@ -826,6 +844,9 @@ I couldn't verify your transaction status. Please check Basescan:
 🔗 [View Transaction](https://basescan.org/tx/${txHash})
 
 Use \`/mybets\` to verify your bet was placed.`,
+          {
+            ...(threadId && { threadId }),
+          },
         );
       }
     }
