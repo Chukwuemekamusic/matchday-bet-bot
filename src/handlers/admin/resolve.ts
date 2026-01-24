@@ -8,7 +8,7 @@ import { isUserAdmin } from "../../utils/wallet";
 import { db } from "../../db";
 import { matchLookup } from "../../services/matchLookup";
 import { footballApi, FootballAPIService } from "../../services/footballApi";
-import { formatOutcome, formatEth } from "../../utils/format";
+import { formatOutcome, formatEth, sanitizeArgs } from "../../utils/format";
 import { subgraphService } from "../../services/subgraph";
 
 export const createResolveHandler = (
@@ -29,7 +29,8 @@ export const createResolveHandler = (
       }
 
       // Validate arguments
-      if (args.length !== 1) {
+      const cleanArgs = sanitizeArgs(args);
+      if (cleanArgs.length !== 1) {
         await handler.sendMessage(
           channelId,
           `❌ **Invalid Usage**
@@ -84,15 +85,19 @@ This match hasn't been created on-chain yet (no bets placed).`,
 
         // Query subgraph to verify on-chain state
         const onChainMatch = await subgraphService.getMatch(
-          match.on_chain_match_id!.toString()
+          match.on_chain_match_id!.toString(),
         );
 
         if (onChainMatch?.status === "RESOLVED") {
           // Convert subgraph result string to Outcome enum
-          const onChainResultEnum = onChainMatch.result === "HOME" ? 1
-            : onChainMatch.result === "DRAW" ? 2
-            : onChainMatch.result === "AWAY" ? 3
-            : 0;
+          const onChainResultEnum =
+            onChainMatch.result === "HOME"
+              ? 1
+              : onChainMatch.result === "DRAW"
+                ? 2
+                : onChainMatch.result === "AWAY"
+                  ? 3
+                  : 0;
 
           // Match is resolved on-chain - check for conflicts
           if (onChainResultEnum !== match.result) {
@@ -111,14 +116,18 @@ This match hasn't been created on-chain yet (no bets placed).`,
             );
 
             // Align DB with on-chain
-            const onChainHomeScore = onChainMatch.homeScore ? parseInt(onChainMatch.homeScore) : match.home_score!;
-            const onChainAwayScore = onChainMatch.awayScore ? parseInt(onChainMatch.awayScore) : match.away_score!;
+            const onChainHomeScore = onChainMatch.homeScore
+              ? parseInt(onChainMatch.homeScore)
+              : match.home_score!;
+            const onChainAwayScore = onChainMatch.awayScore
+              ? parseInt(onChainMatch.awayScore)
+              : match.away_score!;
 
             db.updateMatchResult(
               match.id,
               onChainHomeScore,
               onChainAwayScore,
-              onChainResultEnum
+              onChainResultEnum,
             );
             db.markMatchOnChainResolved(match.id);
 

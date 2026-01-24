@@ -6,6 +6,7 @@ import type {
 import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { isUserAdmin } from "../../utils/wallet";
 import { db } from "../../db";
+import { sanitizeArgs } from "../../utils/format";
 
 // get the database match id and on-chain match id from the match code
 export const createMatchIdHandler = (
@@ -26,7 +27,8 @@ export const createMatchIdHandler = (
       }
 
       // Parse arguments
-      if (args.length !== 1) {
+      const cleanArgs = sanitizeArgs(args);
+      if (cleanArgs.length !== 1) {
         await handler.sendMessage(
           channelId,
           `❌ **Invalid Usage**
@@ -39,7 +41,7 @@ export const createMatchIdHandler = (
         return;
       }
 
-      const [matchCode] = args;
+      const [matchCode] = cleanArgs;
 
       const match = db.getMatchByMatchCode(matchCode);
 
