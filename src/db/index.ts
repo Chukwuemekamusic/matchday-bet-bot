@@ -456,13 +456,16 @@ class DatabaseService {
 
   /**
    * Get matches that need results checked
+   * Includes both:
+   * - Unfinished matches (status IN_PLAY, TIMED, etc.)
+   * - Finished matches that haven't been resolved on-chain yet
    */
   getMatchesAwaitingResults(): DBMatch[] {
     const stmt = this.db.prepare(`
       SELECT * FROM matches
       WHERE on_chain_match_id IS NOT NULL
-        AND status NOT IN ('FINISHED', 'CANCELLED', 'POSTPONED')
-        AND result IS NULL
+        AND status NOT IN ('CANCELLED', 'POSTPONED')
+        AND (result IS NULL OR on_chain_resolved = 0)
     `);
     return stmt.all() as DBMatch[];
   }
@@ -635,6 +638,25 @@ class DatabaseService {
       ORDER BY resolved_at ASC
     `);
     return stmt.all() as DBMatch[];
+  }
+
+  /**
+   * Get matches that are stuck (finished but not resolved on-chain for >30min)
+   * Used for monitoring and alerting
+   */
+  getStuckMatches(): DBMatch[] {
+    const thirtyMinutesAgo = Math.floor(Date.now() / 1000) - 30 * 60;
+    const stmt = this.db.prepare(`
+      SELECT * FROM matches
+      WHERE on_chain_match_id IS NOT NULL
+        AND status = 'FINISHED'
+        AND result IS NOT NULL
+        AND on_chain_resolved = 0
+        AND resolved_at IS NOT NULL
+        AND resolved_at < ?
+      ORDER BY resolved_at ASC
+    `);
+    return stmt.all(thirtyMinutesAgo) as DBMatch[];
   }
 
   /**

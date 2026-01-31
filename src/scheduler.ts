@@ -637,6 +637,8 @@ async function pollMatchResults(): Promise<void> {
     ? schedulerState.lastKickoff + 3 * 60 * 60
     : null;
 
+  // Stop polling only if ALL matches are resolved (both finished and on-chain)
+  // Note: getMatchesAwaitingResults() now includes matches with on_chain_resolved=0
   if (unresolvedMatches.length === 0) {
     console.log("✅ All matches resolved. Stopping results polling.");
     stopResultsPolling();
@@ -670,6 +672,22 @@ async function pollMatchResults(): Promise<void> {
         `   ⏳ ${match.home_team} vs ${match.away_team}: ${Math.abs(
           minutesSinceExpectedFinish
         )} min until expected finish`
+      );
+    }
+  }
+
+  // Monitor for stuck matches (finished but not resolved on-chain for >30min)
+  const stuckMatches = db.getStuckMatches();
+  if (stuckMatches.length > 0) {
+    console.error(
+      `🚨 WARNING: ${stuckMatches.length} match(es) stuck in unresolved state (>30min):`
+    );
+    for (const match of stuckMatches) {
+      const minutesStuck = Math.floor(
+        (now - (match.resolved_at || 0)) / 60
+      );
+      console.error(
+        `   ⚠️  ${match.home_team} vs ${match.away_team} (on-chain ID: ${match.on_chain_match_id}) - stuck for ${minutesStuck} min`
       );
     }
   }
