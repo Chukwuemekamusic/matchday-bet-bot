@@ -6,7 +6,7 @@
 import type { CommandHandler, CommandEventWithArgs } from "../types";
 import { db } from "../../db";
 import { formatMatchDisplay, sanitizeArgs } from "../../utils/format";
-import { getCompetitionEmoji, LEAGUE_CODE_MAP } from "../../utils/competition";
+import { getCompetitionEmoji, LEAGUE_CODE_MAP, getSupportedCompetitionsList } from "../../utils/competition";
 import { getSmartThreadOpts } from "../../utils/threadRouter";
 import { subgraphService } from "../../services/subgraph";
 import type { DBMatch } from "../../types";
@@ -22,9 +22,10 @@ export const handleMatches: CommandHandler<CommandEventWithArgs> = async (
   let matches = db.getTodaysMatches();
 
   if (matches.length === 0) {
+    const competitions = getSupportedCompetitionsList();
     await handler.sendMessage(
       channelId,
-      "📅 No matches scheduled for today. Check back tomorrow!",
+      `📅 No matches scheduled for today from the major competitions we track: ${competitions}.\n\nCheck back tomorrow!`,
       opts,
     );
     return;

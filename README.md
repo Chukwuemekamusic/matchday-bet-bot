@@ -10,7 +10,7 @@ Built for the **Towns Protocol – "Bots That Move Money"** competition. Bet on 
 
 - 💸 **Real Money, Real Matches** – Bet ETH on live football across 6 major leagues
 - 🤝 **Parimutuel Pool Betting** – Winners split the entire pool proportionally (not house odds)
-- ⛓️ **On-Chain Settlement** – Trustless, transparent betting via smart contracts on Base
+- ⛓️ **On-Chain Settlement** – Trustless, transparent betting via smart contracts on Base ([Smart contract](https://github.com/Chukwuemekamusic/matchday-contract.git))
 - 📊 **Live In-Chat Updates** – Match scores, odds, and results flow right into your Town
 - 🏆 **Competition-Ready** – Stats tracking, leaderboards, and seamless wallet integration
 
@@ -21,6 +21,10 @@ Built for the **Towns Protocol – "Bots That Move Money"** competition. Bet on 
 ### Getting Started
 
 Once **MatchDay Bet Bot** is added to your Town, you can start betting immediately. The bot fetches live matches daily and posts them to your channel.
+
+**📢 Official Bot Town:** Visit [https://app.towns.com/t/0x6870d50263b4ab420b13c3c03af370b46f57be0a/](https://app.towns.com/t/0x6870d50263b4ab420b13c3c03af370b46f57be0a/) to see daily match announcements and join the community.
+
+> 🚀 **Coming Soon:** Each Town using the bot will be able to configure their own announcement channel for automated match posts.
 
 ### Viewing Matches
 
@@ -63,6 +67,27 @@ Total Pool: 0.15 ETH
 
 ---
 
+### Understanding Match Identifiers
+
+Matches can be referenced in two ways:
+
+**Daily Match Number (`#1`, `#2`, etc.)**
+
+- Simple sequential numbers shown in `/matches` output
+- Resets daily (e.g., today's `#1` is different from tomorrow's `#1`)
+- Example: `/bet 1 home 0.05`
+
+**Match Code (`20260204-1`, `20260204-2`, etc.)**
+
+- Permanent identifier in format `YYYYMMDD-N`
+- Stays the same across days
+- More reliable for historical matches
+- Example: `/bet 20260204-1 home 0.05`
+
+💡 **Tip:** Both formats work for all commands. Use daily numbers for convenience, or match codes for precision.
+
+---
+
 ### Placing Bets
 
 **`/bet <match#> <home|draw|away> <amount>`** – Place a bet
@@ -73,11 +98,21 @@ Total Pool: 0.15 ETH
 /bet 3 draw 0.02        (Bet 0.02 ETH on a draw)
 ```
 
-After placing a bet, you'll see a confirmation message with the pending bet details. You have **5 minutes** to confirm or cancel.
+or
 
-The bot will prompt you to sign the transaction. Once confirmed, you'll receive a success message.
+**`/bet <match_code> <home|draw|away> <amount>`** – Place a bet using the match code
 
-**`/cancel`** – Cancel your pending bet (before confirming)
+```text
+/bet 20260204-1 home 0.05        (Bet 0.05 ETH on Arsenal)
+/bet 20260204-2 away 0.01        (Bet 0.01 ETH on Brighton)
+/bet 20260204-3 draw 0.02        (Bet 0.02 ETH on a draw)
+```
+
+After placing a bet, you'll see a confirmation message with the pending bet details and a **"Confirm Bet"** button. You have **5 minutes** to confirm or cancel.
+
+Click the **"Confirm Bet"** button, and the bot will prompt you to sign the transaction. Once the transaction is mined, you'll receive a success message.
+
+**`/cancel`** – Cancel your pending bet (before clicking the confirm button)
 
 **`/pending`** – Check if you have a pending bet
 
@@ -101,7 +136,9 @@ Match #5: Barcelona vs Real Madrid
 
 **`/verify`** – Sync your bets with on-chain state
 
-Useful if you think there's a discrepancy between what you see and what's on-chain.
+- Useful if you think there's a discrepancy between what you see and what's on-chain
+- Use this when a transaction goes through but isn't properly captured by the bot
+- This is a troubleshooting tool that reconciles the database with blockchain state
 
 **`/claimable`** – List all unclaimed winnings
 
@@ -122,7 +159,11 @@ Total Claimable: 0.087 ETH
 /claim 3
 ```
 
-The bot will prompt you to sign the transaction. Your winnings will be sent to your wallet.
+The bot will show you the winnings amount and a **"Claim Winnings"** button. Click the button, and the bot will prompt you to sign the transaction. Your winnings will be sent to your wallet once the transaction is mined.
+
+**`/claim_all`** – Claim all your unclaimed winnings at once
+
+The bot will guide you through claiming all eligible winnings in a batch transaction.
 
 ---
 
@@ -172,6 +213,16 @@ Top Bettors:
 3. 0x9876...5432 – +0.12 ETH (9 bets)
 ```
 
+**`/winners <match#>`** – See winning bettors for a specific match
+
+```text
+/winners 3
+
+Winners for Liverpool vs Everton:
+1. 0x1234...5678 – 0.05 ETH bet → 0.12 ETH won
+2. 0xabcd...ef01 – 0.03 ETH bet → 0.07 ETH won
+```
+
 ---
 
 ### How Betting Works
@@ -185,6 +236,14 @@ Unlike traditional sportsbooks, MatchDay Bet Bot uses **parimutuel betting**:
 3. After the match, winners split the **entire pool** proportionally to their stake
 4. A small **1% platform fee** applies (only when there are both winners and losers)
 
+#### Betting Rules
+
+1. You can only bet on one outcome per match
+2. Minimum bet: 0.001 ETH & Maximum bet: 0.1 ETH (configurable by admin)
+3. If everyone bets on the same outcome, you get your stake back (no fee)
+4. If there are no winners (everyone bets on the losing outcome), you get your stake back (no fee)
+5. If there are winners, you split the pool proportionally to your stake (1% fee)
+
 **Example:**
 
 - Total pool: 1.0 ETH
@@ -196,12 +255,38 @@ Unlike traditional sportsbooks, MatchDay Bet Bot uses **parimutuel betting**:
 #### Betting Flow
 
 1. View matches with `/matches`
-2. Place a bet: `/bet 1 home 0.05`
-3. Confirm within 5 minutes: `/confirm`
+2. Place a bet: `/bet 1 home 0.05` (or use match code: `/bet 20260204-1 home 0.05`)
+3. Click the **"Confirm Bet"** button within 5 minutes
 4. Sign the transaction when prompted
 5. Wait for the match to finish
 6. Check claimable winnings: `/claimable`
 7. Claim your winnings: `/claim 1`
+8. Click the **"Claim Winnings"** button and sign the transaction
+
+---
+
+### Troubleshooting
+
+**Transaction went through but bot didn't confirm?**
+
+- Use `/verify` to sync your bets with on-chain state
+- The bot will check the blockchain and update your bet status
+
+**Can't claim winnings?**
+
+- Check if the match is resolved with `/claimable`
+- The bot auto-resolves matches 3+ hours after kickoff
+- If the match is postponed, use `/claim_refund` instead
+
+**Pending bet expired?**
+
+- Pending bets expire after 5 minutes for security
+- Simply place a new bet with `/bet`
+
+**Wrong wallet used for betting?**
+
+- The bot remembers which wallet you used for each bet
+- Claims will automatically use the same wallet
 
 ---
 
@@ -218,11 +303,16 @@ Unlike traditional sportsbooks, MatchDay Bet Bot uses **parimutuel betting**:
 
 ---
 
-### Admin Commands
+### Additional Commands
 
-**`/fetch`** – Manually fetch today's matches (bot does this automatically at 6 AM UTC)
+**`/help`** – List all available commands with descriptions
 
-**`/help`** – List all available commands
+**`/contractinfo`** – Show smart contract details and configuration (for transparency)
+
+view the deployed contract on [basescan](https://basescan.org/address/0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947#code)
+view the implementation contract on [basescan](https://basescan.org/address/0x2f0A079981aC1BaA4fEe85619F1f09BB12D9e9e4#code)
+
+> **Note:** Daily match announcements are currently posted to the [official bot Town](https://app.towns.com/t/0x6870d50263b4ab420b13c3c03af370b46f57be0a/). In the future, each Town will be able to configure their own announcement channel.
 
 ---
 
@@ -352,11 +442,11 @@ matchday_bet_bot/
 │  ├─ commands.ts        # Slash command definitions
 │  ├─ scheduler.ts       # Automated tasks (fetch, close, resolve)
 │  ├─ handlers/          # Command handlers
-│  │  ├─ admin.ts        # /fetch, /help
-│  │  ├─ betting.ts      # /bet, /confirm, /cancel, /pending
-│  │  ├─ claiming.ts     # /claimable, /claim, /verify
-│  │  ├─ matches.ts      # /matches, /odds
-│  │  └─ stats.ts        # /stats, /leaderboard, /mybets
+│  │  ├─ admin.ts        # /help, /post, /dbcheck
+│  │  ├─ betting.ts      # /bet, /cancel, /pending
+│  │  ├─ claiming.ts     # /claim, /claimable, /claim_all, /claim_refund, /verify
+│  │  ├─ matches.ts      # /matches, /odds, /active, /mybets, /winners
+│  │  └─ stats.ts        # /stats, /leaderboard
 │  ├─ services/          # External integrations
 │  │  ├─ contract.ts     # On-chain interactions (Viem)
 │  │  ├─ footballApi.ts  # Match data fetching
@@ -405,16 +495,19 @@ matchday_bet_bot/
 
 1. User runs `/bet 1 home 0.05`
 2. Bot creates pending bet in DB (5-min expiry)
-3. User runs `/confirm`
-4. Bot checks if match exists on-chain
+3. Bot sends message with "Confirm Bet" button
+4. User clicks "Confirm Bet" button
+5. Bot checks if match exists on-chain
    - If not: `createMatch()` transaction via smart account
-5. Bot prompts user to sign `placeBet()` transaction
-6. User signs → Transaction sent to Base
-7. Bot monitors for `BetPlaced` event
-8. On event: Update DB, confirm to user
-9. At kickoff: Bot calls `closeBetting()`
-10. Post-match: Bot calls `resolveMatch()` with result
-11. User runs `/claim` → Bot prompts for `claimWinnings()` transaction
+6. Bot sends transaction interaction to user's wallet
+7. User signs → Transaction sent to Base
+8. Bot monitors for `BetPlaced` event
+9. On event: Update DB, confirm to user
+10. At kickoff: Bot calls `closeBetting()`
+11. Post-match: Bot calls `resolveMatch()` with result
+12. User runs `/claim` → Bot shows "Claim Winnings" button
+13. User clicks button → Bot sends `claimWinnings()` transaction interaction
+14. User signs → Winnings transferred to wallet
 
 #### Smart Account Architecture
 
@@ -455,7 +548,11 @@ matchday_bet_bot/
 
 The bot interacts with the **MatchDayBet** contract on Base L2.
 
-**Contract:** `../matchdaybet/src/MatchDayBet.sol`
+**Contract Address:** `0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947` ([View on Basescan](https://basescan.org/address/0x1b048C7323C7c7FE910a5F0e08B36b0c715e8947))
+
+**Implementation Address:** `0x2f0A079981aC1BaA4fEe85619F1f09BB12D9e9e4`([View on Basescan](https://basescan.org/address/0x2f0A079981aC1BaA4fEe85619F1f09BB12D9e9e4))
+
+**Contract github:** `https://github.com/Chukwuemekamusic/matchday-contract.git`
 
 #### Key Features
 

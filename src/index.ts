@@ -141,9 +141,6 @@ bot.onSlashCommand("claim", createClaimHandler(handlerContext));
 // /winners - Show winning bettors for a specific match
 bot.onSlashCommand("winners", createWinnersHandler(handlerContext));
 
-// /fetch - Admin command to manually fetch matches
-bot.onSlashCommand("fetch", createFetchHandler(handlerContext));
-
 // /post - Admin command to manually post announcements
 bot.onSlashCommand("post", createPostHandler(handlerContext));
 
@@ -465,7 +462,10 @@ Waiting for confirmation on Base...
                             topics: log.topics,
                           });
 
-                          if (decoded.eventName === "WinningsClaimed" && decoded.args) {
+                          if (
+                            decoded.eventName === "WinningsClaimed" &&
+                            decoded.args
+                          ) {
                             winnings = (decoded.args as any).amount as bigint;
                             profit = (decoded.args as any).profit as bigint;
                             break;

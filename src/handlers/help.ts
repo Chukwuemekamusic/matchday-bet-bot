@@ -9,7 +9,7 @@ import { getSmartThreadOpts } from "../utils/threadRouter";
 
 export const handleHelp: CommandHandler<BaseCommandEvent> = async (
   handler,
-  { channelId, threadId }
+  { channelId, threadId },
 ) => {
   const opts = getSmartThreadOpts(threadId);
   const message = `🎯 **MatchDay Bet Bot - Commands**
@@ -21,6 +21,7 @@ export const handleHelp: CommandHandler<BaseCommandEvent> = async (
 **Betting:** \n\n
 • \`/bet <match#> <home|draw|away> <amount>\` - Place a bet \n\n
   Example: \`/bet 1 home 0.01\`
+  or \`/bet 20260204-1 home 0.01\`(using match code)
   (You'll get a confirmation button to sign the transaction)
 • \`/pending\` - Check your pending bet status \n\n
 • \`/cancel\` - Cancel your pending bet \n\n

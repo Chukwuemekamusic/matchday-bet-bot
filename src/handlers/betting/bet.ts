@@ -68,32 +68,28 @@ export const createBetHandler = (
         console.log("❌ Invalid args length:", cleanArgs.length);
         await handler.sendMessage(
           channelId,
-          `❌ Usage: \`/bet <match #> <home|draw|away> <amount>\`
-Example: \`/bet 1 home 0.01\``,
+          `❌ Usage: \`/bet <match # or code> <home|draw|away> <amount>\`
+Examples: \`/bet 1 home 0.01\` or \`/bet 20260204-1 home 0.01\``,
           opts,
         );
         return;
       }
 
-      const matchNum = parseInt(cleanArgs[0]);
+      const matchIdentifier = cleanArgs[0];
       const predictionStr = cleanArgs[1];
       const amountStr = cleanArgs[2];
 
-      console.log("📝 Parsed args:", { matchNum, predictionStr, amountStr });
+      console.log("📝 Parsed args:", {
+        matchIdentifier,
+        predictionStr,
+        amountStr,
+      });
 
-      // Validate match number
-      if (isNaN(matchNum) || matchNum < 1) {
-        console.log("❌ Invalid match number");
-        await handler.sendMessage(
-          channelId,
-          "❌ Invalid match number. Use `/matches` to see available matches.",
-          opts,
-        );
-        return;
-      }
-
-      // Use match lookup service
-      const lookupResult = matchLookup.findByDailyIdOnly(matchNum);
+      // Use match lookup service (supports both daily ID and match code)
+      const lookupResult = matchLookup.findMatch(matchIdentifier, {
+        commandName: "/bet",
+        suggestionCommand: "/matches",
+      });
       console.log(
         "📊 Match lookup:",
         lookupResult.success

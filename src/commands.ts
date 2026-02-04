@@ -81,17 +81,15 @@ const commands = [
     description: "Show winning bettors for a specific match",
   },
 
-  // Migration (Temporary)
+  // Contract Info for transparency and auditability
   {
-    name: "migrate",
-    description: "Migrate your existing on-chain bets to database",
+    name: "contractinfo",
+    description: "🔧 Show contract details and configuration",
   },
 
-  // Admin
-  {
-    name: "fetch",
-    description: "Manually fetch today's matches from API",
-  },
+  /*//////////////////////////////////////////////////////////////
+                         DEBUG SLASH COMMANDS
+    //////////////////////////////////////////////////////////////*/
 
   {
     name: "post",
@@ -103,14 +101,6 @@ const commands = [
     description: "[Admin] Check database connectivity and show stats",
   },
 
-  /*//////////////////////////////////////////////////////////////
-                         DEBUG SLASH COMMANDS
-    //////////////////////////////////////////////////////////////*/
-
-  {
-    name: "contractinfo",
-    description: "🔧 Show contract version and configuration",
-  },
   {
     name: "matchid",
     description:
@@ -128,6 +118,11 @@ const commands = [
   {
     name: "syncmatches",
     description: "[Admin] Sync on-chain match IDs and fix match codes",
+  },
+  // Migration (Temporary)
+  {
+    name: "migrate",
+    description: "Migrate your existing on-chain bets to database",
   },
 ] as const satisfies BotCommand[];
 

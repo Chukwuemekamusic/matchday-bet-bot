@@ -12,7 +12,7 @@ import { getThreadMessageOpts } from "../../utils/threadRouter";
 import { formatEth } from "../../utils/format";
 
 export const createContractInfoHandler = (
-  context: HandlerContext
+  context: HandlerContext,
 ): CommandHandler<BaseCommandEvent> => {
   return async (handler, { channelId, userId, eventId, threadId }) => {
     const opts = getThreadMessageOpts(threadId, eventId);
@@ -23,7 +23,7 @@ export const createContractInfoHandler = (
         await handler.sendMessage(
           channelId,
           "❌ Smart contract is not yet deployed. Please contact the admin.",
-          opts
+          opts,
         );
         return;
       }
@@ -46,6 +46,8 @@ export const createContractInfoHandler = (
       ]);
 
       const contractAddress = context.contractService.getContractAddress();
+      const implementationAddress =
+        context.contractService.getImplementationAddress();
 
       // Calculate platform fee percentage
       const platformFeePercent =
@@ -56,6 +58,10 @@ export const createContractInfoHandler = (
 **Contract Address:**
 \`${contractAddress}\`
 • View: https://basescan.org/address/${contractAddress}
+
+**Logic Implementation Address:**
+\`${implementationAddress}\`
+• View: https://basescan.org/address/${implementationAddress}
 
 **Version:** ${version || "N/A"}
 
@@ -79,7 +85,7 @@ export const createContractInfoHandler = (
         `❌ Failed to fetch contract info: ${
           error instanceof Error ? error.message : "Unknown error"
         }`,
-        opts
+        opts,
       );
     }
   };

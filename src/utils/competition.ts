@@ -2,6 +2,9 @@
  * Competition-related utilities
  */
 
+import { COMPETITION_NAMES, COMPETITION_EMOJIS } from "../types";
+import { config } from "../config";
+
 /**
  * Get emoji for a competition code
  */
@@ -15,6 +18,32 @@ export function getCompetitionEmoji(code: string): string {
     CL: "🏆",
   };
   return emojiMap[code] || "⚽";
+}
+
+/**
+ * Get a formatted list of supported competitions without emojis
+ * Example: "Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League"
+ */
+export function getSupportedCompetitionsList(): string {
+  return config.footballApi.supportedCompetitions
+    .map((id) => COMPETITION_NAMES[id])
+    .filter((name): name is string => name !== undefined)
+    .join(", ");
+}
+
+/**
+ * Get a formatted list of supported competitions with emojis
+ * Example: "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League, 🇪🇸 La Liga, ..."
+ */
+export function getSupportedCompetitionsWithEmojis(): string {
+  return config.footballApi.supportedCompetitions
+    .map((id) => {
+      const name = COMPETITION_NAMES[id];
+      const emoji = COMPETITION_EMOJIS[id];
+      return name && emoji ? `${emoji} ${name}` : null;
+    })
+    .filter((entry): entry is string => entry !== null)
+    .join(", ");
 }
 
 /**

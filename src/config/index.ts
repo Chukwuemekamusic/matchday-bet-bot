@@ -27,8 +27,8 @@ export const config = {
 
   implementation: {
     address: optionalEnv(
-      "IMPLEMENTATION",
-      "0x626A22ecFaD621e62e1c7829e256e1C650533028",
+      "IMPLEMENTATION_ADDRESS",
+      "0x2f0A079981aC1BaA4fEe85619F1f09BB12D9e9e4",
     ),
   },
 
